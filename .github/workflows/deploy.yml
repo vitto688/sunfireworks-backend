@@ -20,7 +20,8 @@ jobs:
 
       - name: Deploy to server
         run: |
-          ssh -o StrictHostKeyChecking=no -tt creep@143.198.202.203 << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{
+          secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
             # Navigasi ke direktori project
             cd /home/creep/app/src
 
@@ -40,8 +41,8 @@ jobs:
             python manage.py collectstatic --noinput
 
             # Restart Gunicorn (atau server lainnya)
-            sudo systemctl restart django-api
+            sudo systemctl restart django-api || exit
 
             # Restart Nginx (atau web server lainnya)
-            sudo systemctl restart nginx
+            sudo systemctl restart nginx || exit
           EOF
