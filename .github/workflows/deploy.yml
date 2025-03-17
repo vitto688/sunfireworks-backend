@@ -20,7 +20,7 @@ jobs:
 
       - name: Deploy to server
         run: |
-          ssh -o TCPKeepAlive=yes -tt creep@143.198.202.203 << 'EOF'
+          ssh -o StrictHostKeyChecking=no -tt creep@143.198.202.203 << 'EOF'
             # Navigasi ke direktori project
             cd /home/creep/app/src
 
