@@ -20,7 +20,7 @@ jobs:
 
       - name: Deploy to server
         run: |
-          ssh -o StrictHostKeyChecking=no -tt creep@143.198.202.203 << 'EOF'
+          ssh -o StrictHostKeyChecking=no TCPKeepAlive=yes -tt creep@143.198.202.203 << 'EOF'
             # Navigasi ke direktori project
             cd /home/creep/app/src
 
@@ -41,5 +41,7 @@ jobs:
 
             # Restart Gunicorn (atau server lainnya)
             sudo systemctl restart django-api
-            
+
+            # Restart Nginx (atau web server lainnya)
+            sudo systemctl restart nginx
           EOF
