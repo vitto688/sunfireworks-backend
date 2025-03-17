@@ -40,7 +40,7 @@ jobs:
             python manage.py collectstatic --noinput
 
             # Restart Gunicorn (atau server lainnya)
-            sudo systemctl restart gunicorn
+            sudo systemctl restart django-api
 
             # Restart Nginx (atau web server lainnya)
             sudo systemctl restart nginx
