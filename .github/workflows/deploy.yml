@@ -20,7 +20,7 @@ jobs:
 
       - name: Deploy to server
         run: |
-          ssh -o StrictHostKeyChecking=no creep@143.198.202.203 << 'EOF'
+          ssh user@your-server-ip << 'EOF'
             # Navigasi ke direktori project
             cd /home/creep/app/src
 
