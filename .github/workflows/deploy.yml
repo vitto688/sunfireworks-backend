@@ -1,0 +1,47 @@
+name: Deploy Django to Ubuntu Server
+
+on:
+  push:
+    branches:
+      - main # atau ganti dengan branch lain yang kamu inginkan
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy to server
+        run: |
+          ssh -o StrictHostKeyChecking=no creep@143.198.202.203 << 'EOF'
+            # Navigasi ke direktori project
+            cd /home/creep/app/src
+
+            # Tarik perubahan terbaru dari GitHub
+            git pull origin main
+
+            # Aktivasi virtual environment
+            source /home/creep/app/venv/bin/activate
+
+            # Install dependencies terbaru
+            pip install -r requirements.txt
+
+            # Jalankan migrations
+            python manage.py migrate
+
+            # (Opsional) Collect static files jika diperlukan
+            python manage.py collectstatic --noinput
+
+            # Restart Gunicorn (atau server lainnya)
+            sudo systemctl restart gunicorn
+
+            # Restart Nginx (atau web server lainnya)
+            sudo systemctl restart nginx
+          EOF
