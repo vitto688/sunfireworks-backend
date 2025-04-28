@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ['www.sfwarehouse.app','sfwarehouse.app','143.198.202.203']
+ALLOWED_HOSTS = ['www.sfwarehouse.app','sfwarehouse.app','143.198.202.203','localhost']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'users',
+    'inventory',
 ]
 
 MIDDLEWARE = [
