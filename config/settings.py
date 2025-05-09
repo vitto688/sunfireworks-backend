@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ['www.sfwarehouse.app','sfwarehouse.app','143.198.202.203','localhost']
+ALLOWED_HOSTS = ['www.sfwarehouse.app','sfwarehouse.app','143.198.202.203','localhost','127.0.0.1']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -101,6 +101,7 @@ CORS_ALLOW_METHODS = [
 ]
 
 CORS_ALLOW_HEADERS = [
+    'access-control-allow-origin',
     'accept',
     'accept-encoding',
     'authorization',
@@ -110,6 +111,7 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'withcredentials',
 ]
 
 AUTH_PASSWORD_VALIDATORS = [
