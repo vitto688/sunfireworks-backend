@@ -129,22 +129,24 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 class StockViewSet(viewsets.ModelViewSet):
-    queryset = Stock.objects.all()
+    queryset = Stock.objects.filter(product__is_deleted=False)
     serializer_class = StockSerializer
-
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'by_warehouse', 'by_product']:
-            return [IsAuthenticated()]
-        return [IsAdminUser()]  # For create, update, delete operations
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         # Only show stocks for non-deleted products
         return Stock.objects.filter(product__is_deleted=False)
 
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve', 'by_warehouse', 'by_product']:
+            return [IsAuthenticated()]
+        return [IsAdminUser()]
+
     @action(detail=False, methods=['GET'])
     def by_warehouse(self, request):
         warehouse_id = request.query_params.get('warehouse_id')
         if warehouse_id:
+            # Add filter for non-deleted products
             stocks = self.get_queryset().filter(warehouse_id=warehouse_id)
             serializer = self.get_serializer(stocks, many=True)
             return Response(serializer.data)
@@ -157,6 +159,15 @@ class StockViewSet(viewsets.ModelViewSet):
     def by_product(self, request):
         product_id = request.query_params.get('product_id')
         if product_id:
+            # First check if product exists and is not deleted
+            try:
+                product = Product.objects.get(id=product_id, is_deleted=False)
+            except Product.DoesNotExist:
+                return Response(
+                    {"error": "Product not found or is deleted"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
             stocks = self.get_queryset().filter(product_id=product_id)
             serializer = self.get_serializer(stocks, many=True)
             return Response(serializer.data)
@@ -164,3 +175,21 @@ class StockViewSet(viewsets.ModelViewSet):
             {"error": "product_id is required"},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+    def update(self, request, *args, **kwargs):
+        stock = self.get_object()
+        if stock.product.is_deleted:
+            return Response(
+                {"error": "Cannot update stock for deleted product"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        stock = self.get_object()
+        if stock.product.is_deleted:
+            return Response(
+                {"error": "Cannot update stock for deleted product"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().partial_update(request, *args, **kwargs)

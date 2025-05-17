@@ -53,6 +53,7 @@ class StockSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
+    is_product_deleted = serializers.BooleanField(source='product.is_deleted', read_only=True)
 
     class Meta:
         model = Stock
@@ -65,10 +66,18 @@ class StockSerializer(serializers.ModelSerializer):
             'warehouse_name',
             'carton_quantity',
             'pack_quantity',
+            'is_product_deleted',
             'created_at',
             'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+    def validate(self, data):
+        if 'product' in data and data['product'].is_deleted:
+            raise serializers.ValidationError(
+                "Cannot perform operations on stock of deleted product"
+            )
+        return data
 
 class ProductDetailSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
