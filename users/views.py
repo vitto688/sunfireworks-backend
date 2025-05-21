@@ -1,17 +1,31 @@
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser, BasePermission
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from .models import User, Role
 from .serializers import (
     UserCreateSerializer,
+    UserUpdateSerializer,
     RoleSerializer,
     ChangePasswordSerializer,
     LoginSerializer,
     UserSerializer,
 )
+
+class IsSelfOrAdmin(BasePermission):
+    """
+    Custom permission to only allow users to edit their own information
+    Admins can still list and create users, but can't modify other users
+    """
+    def has_permission(self, request, view):
+        if view.action in ['list', 'create']:
+            return request.user.is_staff
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        return obj == request.user or request.user.is_superuser
 
 
 class RoleViewSet(viewsets.ModelViewSet):
@@ -22,21 +36,31 @@ class RoleViewSet(viewsets.ModelViewSet):
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.filter(is_deleted=False)
-    permission_classes = [IsAdminUser]
-    serializer_class = UserCreateSerializer
+
+    def get_permissions(self):
+        if self.action in ['update', 'partial_update', 'change_password']:
+            permission_classes = [IsAuthenticated, IsSelfOrAdmin]
+        elif self.action == 'change_role':
+            permission_classes = [IsAuthenticated, IsAdminUser]
+        else:
+            permission_classes = [IsAuthenticated, IsAdminUser]
+        return [permission() for permission in permission_classes]
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return UserCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return UserUpdateSerializer
+        return UserSerializer
 
     def get_queryset(self):
-        # Get the requested view type from query parameters
         view_type = self.request.query_params.get('view', 'active')
 
         if view_type == 'all':
-            # Return all users including deleted ones
             return User.objects.all()
         elif view_type == 'deleted':
-            # Return only deleted users
             return User.objects.filter(is_deleted=True)
         else:
-            # Default: return active (non-deleted) users
             return User.objects.filter(is_deleted=False)
 
     def destroy(self, request, *args, **kwargs):
@@ -46,6 +70,52 @@ class UserViewSet(viewsets.ModelViewSet):
             {'message': f'User {user.email} has been deleted'},
             status=status.HTTP_200_OK
         )
+
+    @action(detail=True, methods=['POST'])
+    def change_password(self, request, pk=None):
+        user = self.get_object()
+        serializer = ChangePasswordSerializer(data=request.data)
+
+        if serializer.is_valid():
+            if not user.check_password(serializer.validated_data['old_password']):
+                return Response(
+                    {'error': 'Invalid old password'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            user.set_password(serializer.validated_data['new_password'])
+            user.save()
+            return Response(
+                {'message': 'Password updated successfully'},
+                status=status.HTTP_200_OK
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['POST'], permission_classes=[IsAdminUser])
+    def change_role(self, request, pk=None):
+        user = self.get_object()
+        role_id = request.data.get('role')
+
+        if not request.user.is_superuser:
+            return Response(
+                {'error': 'Only superusers can change user roles'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            role = Role.objects.get(id=role_id)
+            user.role = role
+            user.save()
+            return Response(
+                {'message': f'Role updated to {role.name}'},
+                status=status.HTTP_200_OK
+            )
+        except Role.DoesNotExist:
+            return Response(
+                {'error': 'Invalid role ID'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     @action(detail=True, methods=['POST'], url_path='restore')
     def restore_user(self, request, pk=None):

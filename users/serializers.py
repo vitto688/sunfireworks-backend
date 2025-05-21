@@ -7,6 +7,17 @@ class RoleSerializer(serializers.ModelSerializer):
         model = Role
         fields = ['id', 'name', 'description']
 
+class UserUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ('username', 'phone_number')
+
+    def validate_email(self, value):
+        # Prevent email updates
+        if 'email' in self.initial_data:
+            raise serializers.ValidationError("Email cannot be updated")
+        return value
+
 class UserSerializer(serializers.ModelSerializer):
     role_name = serializers.CharField(source='role.name', read_only=True)
 
@@ -26,7 +37,7 @@ class UserSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at'
         )
-        read_only_fields = ('is_deleted', 'deleted_at', 'created_at', 'updated_at')
+        read_only_fields = ('is_deleted', 'deleted_at', 'created_at', 'updated_at', 'email')
 
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True)
