@@ -2,14 +2,18 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
-from .models import Category, Supplier, Product, Warehouse, Stock
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Q
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, Transaction
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
     ProductSerializer,
     ProductDetailSerializer,
     WarehouseSerializer,
-    StockSerializer
+    StockSerializer,
+    CustomerSerializer,
+    TransactionSerializer,
 )
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -193,3 +197,117 @@ class StockViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         return super().partial_update(request, *args, **kwargs)
+
+
+class CustomerViewSet(viewsets.ModelViewSet):
+    queryset = Customer.objects.filter(is_deleted=False)
+    serializer_class = CustomerSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        view_type = self.request.query_params.get('view', 'active')
+
+        if view_type == 'all':
+            return Customer.objects.all()
+        elif view_type == 'deleted':
+            return Customer.objects.filter(is_deleted=True)
+        else:
+            return Customer.objects.filter(is_deleted=False)
+
+    def destroy(self, request, *args, **kwargs):
+        customer = self.get_object()
+        customer.soft_delete()
+        return Response(
+            {'message': f'Customer {customer.name} has been deleted'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=['POST'])
+    def restore(self, request, pk=None):
+        try:
+            customer = Customer.objects.get(pk=pk, is_deleted=True)
+            customer.restore()
+            return Response(
+                {'message': f'Customer {customer.name} has been restored'},
+                status=status.HTTP_200_OK
+            )
+        except Customer.DoesNotExist:
+            return Response(
+                {'error': 'Customer not found or not deleted'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class CustomPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+    def get_paginated_response(self, data):
+        return Response({
+            'count': self.page.paginator.count,
+            'total_pages': self.page.paginator.num_pages,
+            'current_page': self.page.number,
+            'next': self.get_next_link(),
+            'previous': self.get_previous_link(),
+            'results': data
+        })
+
+
+class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Transaction.objects.all().order_by('-created_at')
+    serializer_class = TransactionSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        queryset = Transaction.objects.all().order_by('-created_at')
+
+        # Filter by transaction type
+        transaction_type = self.request.query_params.get('transaction_type')
+        if transaction_type:
+            queryset = queryset.filter(transaction_type=transaction_type)
+
+        # Filter by status
+        status = self.request.query_params.get('status')
+        if status:
+            queryset = queryset.filter(status=status)
+
+        # Filter by customer
+        customer_id = self.request.query_params.get('customer_id')
+        if customer_id:
+            queryset = queryset.filter(customer_id=customer_id)
+
+        # Filter by document type
+        document_type = self.request.query_params.get('document_type')
+        if document_type:
+            queryset = queryset.filter(document_type=document_type)
+
+        # Filter by date range
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+
+        if date_from:
+            try:
+                date_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+                queryset = queryset.filter(transaction_date__date__gte=date_from)
+            except ValueError:
+                pass
+
+        if date_to:
+            try:
+                date_to = datetime.strptime(date_to, '%Y-%m-%d').date()
+                queryset = queryset.filter(transaction_date__date__lte=date_to)
+            except ValueError:
+                pass
+
+        # Search
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(document_number__icontains=search) |
+                Q(customer__name__icontains=search) |
+                Q(product__name__icontains=search)
+            )
+
+        return queryset

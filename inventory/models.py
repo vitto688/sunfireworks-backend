@@ -83,6 +83,70 @@ class Stock(models.Model):
     def __str__(self):
         return f"{self.product.name} at {self.warehouse.name}"
 
+
+class Customer(models.Model):
+    name = models.CharField(max_length=200)
+    address = models.TextField()
+    contact_number = models.CharField(max_length=50)
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+    def soft_delete(self):
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save()
+
+    def restore(self):
+        self.is_deleted = False
+        self.deleted_at = None
+        self.save()
+
+
+class Transaction(models.Model):
+    TRANSACTION_TYPE_CHOICES = [
+        ('IN', 'Stock In'),
+        ('OUT', 'Stock Out'),
+    ]
+
+    DOCUMENT_TYPE_CHOICES = [
+        ('PO', 'Purchase Order'),
+        ('SO', 'Sales Order'),
+        ('DO', 'Delivery Order'),
+        ('GRN', 'Goods Received Note'),
+    ]
+
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('CONFIRMED', 'Confirmed'),
+        ('PROCESSING', 'Processing'),
+        ('COMPLETED', 'Completed'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
+    document_number = models.CharField(max_length=100)
+    document_type = models.CharField(max_length=10, choices=DOCUMENT_TYPE_CHOICES)
+    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    user = models.ForeignKey('users.User', on_delete=models.PROTECT)
+    pack_quantity = models.IntegerField(default=0)
+    carton_quantity = models.IntegerField(default=0)
+    transaction_date = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.document_number} - {self.customer.name} - {self.product.name}"
+
+    class Meta:
+        ordering = ['-created_at']
+
 @receiver(post_save, sender=Product)
 def create_product_stocks(sender, instance, created, **kwargs):
     if created:  # Only when a new product is created

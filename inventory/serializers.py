@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Supplier, Product, Warehouse, Stock
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, Transaction
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -123,3 +123,54 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             stock_data[warehouse_name]['carton'] = stock.carton_quantity
 
         return stock_data
+
+
+class CustomerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Customer
+        fields = [
+            'id',
+            'name',
+            'address',
+            'contact_number',
+            'is_deleted',
+            'deleted_at',
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['is_deleted', 'deleted_at', 'created_at', 'updated_at']
+
+
+class TransactionSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+
+    class Meta:
+        model = Transaction
+        fields = [
+            'id',
+            'document_number',
+            'document_type',
+            'transaction_type',
+            'status',
+            'customer',
+            'customer_name',
+            'product',
+            'product_name',
+            'product_code',
+            'user',
+            'user_email',
+            'pack_quantity',
+            'carton_quantity',
+            'transaction_date',
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = [
+            'user',
+            'transaction_date',
+            'created_at',
+            'updated_at'
+        ]
