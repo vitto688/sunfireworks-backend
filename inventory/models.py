@@ -13,7 +13,7 @@ class Category(models.Model):
 
 class Supplier(models.Model):
     name = models.CharField(max_length=200)
-    email = models.EmailField()
+    email = models.CharField(max_length=200)
     address = models.TextField()
     pic_name = models.CharField(max_length=100)
     pic_contact = models.CharField(max_length=100)
