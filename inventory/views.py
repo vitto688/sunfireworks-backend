@@ -1,10 +1,10 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, Transaction
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -13,7 +13,7 @@ from .serializers import (
     WarehouseSerializer,
     StockSerializer,
     CustomerSerializer,
-    TransactionSerializer,
+    SPGSerializer,
 )
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -254,60 +254,30 @@ class CustomPagination(PageNumberPagination):
         })
 
 
-class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Transaction.objects.all().order_by('-created_at')
-    serializer_class = TransactionSerializer
+class SPGViewSet(viewsets.ModelViewSet):
+    serializer_class = SPGSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPagination
 
+
     def get_queryset(self):
-        queryset = Transaction.objects.all().order_by('-created_at')
+        document_type = self.kwargs.get('document_type', '').upper()
+        if document_type not in [choice[0] for choice in SPG.DOCUMENT_TYPE_CHOICES]:
+             return SPG.objects.none()
+        return SPG.objects.filter(document_type=document_type)
 
-        # Filter by transaction type
-        transaction_type = self.request.query_params.get('transaction_type')
-        if transaction_type:
-            queryset = queryset.filter(transaction_type=transaction_type)
+    def perform_create(self, serializer):
+        document_type = self.kwargs.get('document_type', '').upper()
 
-        # Filter by status
-        status = self.request.query_params.get('status')
-        if status:
-            queryset = queryset.filter(status=status)
+        if document_type not in [choice[0] for choice in SPG.DOCUMENT_TYPE_CHOICES]:
+            raise serializers.ValidationError(f"Invalid document_type: {document_type}")
 
-        # Filter by customer
-        customer_id = self.request.query_params.get('customer_id')
-        if customer_id:
-            queryset = queryset.filter(customer_id=customer_id)
+        serializer.save(user=self.request.user, document_type=document_type)
 
-        # Filter by document type
-        document_type = self.request.query_params.get('document_type')
-        if document_type:
-            queryset = queryset.filter(document_type=document_type)
-
-        # Filter by date range
-        date_from = self.request.query_params.get('date_from')
-        date_to = self.request.query_params.get('date_to')
-
-        if date_from:
-            try:
-                date_from = datetime.strptime(date_from, '%Y-%m-%d').date()
-                queryset = queryset.filter(transaction_date__date__gte=date_from)
-            except ValueError:
-                pass
-
-        if date_to:
-            try:
-                date_to = datetime.strptime(date_to, '%Y-%m-%d').date()
-                queryset = queryset.filter(transaction_date__date__lte=date_to)
-            except ValueError:
-                pass
-
-        # Search
-        search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(document_number__icontains=search) |
-                Q(customer__name__icontains=search) |
-                Q(product__name__icontains=search)
-            )
-
-        return queryset
+    def destroy(self, request, *args, **kwargs):
+        spg = self.get_object()
+        spg.delete()
+        return Response(
+            {'message': f'SPG document {spg.document_number} has been deleted'},
+            status=status.HTTP_200_OK
+        )

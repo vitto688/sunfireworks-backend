@@ -1,4 +1,6 @@
+from sys import modules
 from django.db.models.signals import post_save
+from django.db.transaction import non_atomic_requests
 from django.dispatch import receiver
 from django.db import models
 from django.utils import timezone
@@ -107,50 +109,192 @@ class Customer(models.Model):
         self.save()
 
 
-class Transaction(models.Model):
-    TRANSACTION_TYPE_CHOICES = [
-        ('IN', 'Stock In'),
-        ('OUT', 'Stock Out'),
-    ]
-
+class SPG(models.Model):
     DOCUMENT_TYPE_CHOICES = [
-        ('PO', 'Purchase Order'),
-        ('SO', 'Sales Order'),
-        ('DO', 'Delivery Order'),
-        ('GRN', 'Goods Received Note'),
+        ('IMPORT', 'Import'),
+        ('BAWANG', 'Bawang'),
+        ('KAWAT', 'Kawat'),
+        ('LAIN-LAIN', 'Lain-lain'),
     ]
 
-    STATUS_CHOICES = [
-        ('DRAFT', 'Draft'),
-        ('CONFIRMED', 'Confirmed'),
-        ('PROCESSING', 'Processing'),
-        ('COMPLETED', 'Completed'),
-        ('CANCELLED', 'Cancelled'),
-    ]
-
-    document_number = models.CharField(max_length=100)
+    document_number = models.CharField(max_length=100, blank=True)
     document_type = models.CharField(max_length=10, choices=DOCUMENT_TYPE_CHOICES)
-    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPE_CHOICES)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
-    customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
-    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    container_number = models.CharField(max_length=50)
+    vehicle_number = models.CharField(max_length=50)
+    sj_number = models.CharField(max_length=100)
+    start_unload = models.CharField(max_length=50)
+    finish_load = models.CharField(max_length=50)
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
-    pack_quantity = models.IntegerField(default=0)
-    carton_quantity = models.IntegerField(default=0)
     transaction_date = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        return f"{self.document_number} - {self.customer.name} - {self.product.name}"
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.document_number:
+            now = timezone.now()
+            doc_type = self.document_type
+            sequence = 1
+
+            if doc_type == 'IMPORT':
+                last_spg = SPG.objects.filter(
+                    document_type=doc_type,
+                    created_at__year=now.year
+                ).order_by('document_number').last()
+
+                if last_spg:
+                    # Extract number from 'YY-XXX/KA'
+                    last_seq = int(last_spg.document_number.split('/')[0].split('-')[1])
+                    sequence = last_seq + 1
+
+                self.document_number = f"{now.strftime('%y')}-{sequence:03d}/KA"
+
+            else:
+                last_spg = SPG.objects.filter(
+                    document_type=doc_type,
+                    created_at__year=now.year,
+                    created_at__month=now.month
+                ).order_by('document_number').last()
+
+                if last_spg:
+                    last_seq = int(last_spg.document_number.split('/')[-1])
+                    sequence = last_seq +  1
+
+                prefix = ""
+                if doc_type == 'BAWANG':
+                    prefix = f"{now.strftime('%Y-%m')}/SPG-B"
+                elif doc_type == 'KAWAT':
+                    prefix = f"{now.strftime('%Y-%m')}/SPG-K"
+                elif doc_type == 'LAIN-LAIN':
+                    prefix = f"{now.strftime('%Y-%m')}/SPG"
+
+                self.document_number = f"{prefix}/{sequence:03d}"
+
+        super().save(*args, **kwargs)
+
+
+class SPGItems(models.Model):
+    spg = models.ForeignKey(SPG, related_name='items', on_delete=models.PROTECT)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    carton_quantity = models.IntegerField(default=0)
+    pack_quantity = models.IntegerField(default=0)
+    packaging_size = models.CharField(max_length=50)
+    inn = models.CharField(max_length=10)
+    out = models.CharField(max_length=10)
+    pjg = models.CharField(max_length=10)
+    warehouse_size = models.CharField(max_length=50)
+    packaging_weight = models.CharField(max_length=10)
+    warehouse_weight = models.CharField(max_length=10)
+    production_code = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class SPK(models.Model):
+    document_number = models.CharField(max_length=100)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+    user = models.ForeignKey('users.User', on_delete=models.PROTECT)
+    notes = models.TextField(blank=True, null=True)
+    transaction_date = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
 
+
+class SPKItems(models.Model):
+    sj = models.ForeignKey(SPK, on_delete=models.PROTECT)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    carton_quantity = models.IntegerField(default=0)
+    pack_quantity = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class SJ(models.Model):
+    document_number = models.CharField(max_length=100)
+    spk = models.ForeignKey(SPK, on_delete=models.PROTECT)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+    user = models.ForeignKey('users.User', on_delete=models.PROTECT)
+    vehicle_type = models.CharField(max_length=50)
+    vehicle_number = models.CharField(max_length=50)
+    notes = models.TextField(blank=True, null=True)
+    transaction_date = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class SJItems(models.Model):
+    sj = models.ForeignKey(SJ, on_delete=models.PROTECT)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    carton_quantity = models.IntegerField(default=0)
+    pack_quantity = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class SuratLain(models.Model):
+    DOCUMENT_TYPE_CHOICES = [
+        ('STB', 'STB'),
+        ('SPB', 'SPB'),
+        ('RETUR_PEMBELIAN', 'Retur Pembelian'),
+    ]
+
+    document_number = models.CharField(max_length=100)
+    document_type = models.CharField(max_length=100, choices=DOCUMENT_TYPE_CHOICES)
+    sj_number = models.CharField(max_length=100)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    user = models.ForeignKey('users.User', on_delete=models.PROTECT)
+    notes = models.TextField(blank=True, null=True)
+    transaction_date = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class SuratLainItems(models.Model):
+    surat_lain = models.ForeignKey(SuratLain, on_delete=models.PROTECT)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    carton_quantity = models.IntegerField(default=0)
+    pack_quantity = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class SuratTransferStok(models.Model):
+    document_number = models.CharField(max_length=100)
+    source_warehouse = models.ForeignKey(Warehouse, related_name='source_transfers', on_delete=models.PROTECT)
+    destination_warehouse = models.ForeignKey(Warehouse, related_name='destination_transfers', on_delete=models.PROTECT)
+    user = models.ForeignKey('users.User', on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+class SuratTransferStokItems(models.Model):
+    surat_transfer_stok = models.ForeignKey(SuratTransferStok, on_delete=models.PROTECT)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    carton_quantity = models.IntegerField(default=0)
+    pack_quantity = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 @receiver(post_save, sender=Product)
 def create_product_stocks(sender, instance, created, **kwargs):
-    if created:  # Only when a new product is created
-        # Create stock records for all warehouses
+    if created:
         warehouses = Warehouse.objects.all()
         stock_objects = [
             Stock(
@@ -165,8 +309,7 @@ def create_product_stocks(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=Warehouse)
 def create_warehouse_stocks(sender, instance, created, **kwargs):
-    if created:  # Only when a new warehouse is created
-        # Create stock records for all products
+    if created:
         products = Product.objects.filter(is_deleted=False)
         stock_objects = [
             Stock(

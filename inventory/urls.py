@@ -4,10 +4,10 @@ from .views import (
     CategoryViewSet,
     SupplierViewSet,
     ProductViewSet,
-    TransactionViewSet,
     WarehouseViewSet,
     StockViewSet,
     CustomerViewSet,
+    SPGViewSet
 )
 
 router = DefaultRouter()
@@ -17,8 +17,19 @@ router.register(r'products', ProductViewSet)
 router.register(r'warehouses', WarehouseViewSet)
 router.register(r'stocks', StockViewSet)
 router.register(r'customers', CustomerViewSet)
-router.register(r'transactions', TransactionViewSet)
+spg_list = SPGViewSet.as_view({
+    'get': 'list',
+    'post': 'create'
+})
+spg_detail = SPGViewSet.as_view({
+    'get': 'retrieve',
+    'put': 'update',
+    'patch': 'partial_update',
+    'delete': 'destroy'
+})
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('spg/<str:document_type>/', spg_list, name='spg-list'),
+    path('spg/<str:document_type>/<int:pk>/', spg_detail, name='spg-detail'),
 ]
