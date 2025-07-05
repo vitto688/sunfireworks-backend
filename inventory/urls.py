@@ -27,9 +27,13 @@ spg_detail = SPGViewSet.as_view({
     'patch': 'partial_update',
     'delete': 'destroy'
 })
+spg_restore = SPGViewSet.as_view({
+    'post': 'restore'
+})
 
 urlpatterns = [
     path('', include(router.urls)),
     path('spg/<str:document_type>/', spg_list, name='spg-list'),
     path('spg/<str:document_type>/<int:pk>/', spg_detail, name='spg-detail'),
+    path('spg/<str:document_type>/<int:pk>/restore/', spg_restore, name='spg-restore'),
 ]

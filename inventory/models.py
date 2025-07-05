@@ -2,8 +2,9 @@ from sys import modules
 from django.db.models.signals import post_save
 from django.db.transaction import non_atomic_requests
 from django.dispatch import receiver
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
+from django.db.models import F
 
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -127,11 +128,47 @@ class SPG(models.Model):
     finish_load = models.CharField(max_length=50)
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
     transaction_date = models.DateTimeField(auto_now_add=True)
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
+
+    def soft_delete(self):
+        """
+        Marks the SPG as deleted and reverts the stock additions.
+        """
+        with transaction.atomic():
+            for item in self.items.all():
+                Stock.objects.filter(
+                    product=item.product,
+                    warehouse=self.warehouse
+                ).update(
+                    carton_quantity=F('carton_quantity') - item.carton_quantity,
+                    pack_quantity=F('pack_quantity') - item.pack_quantity
+                )
+            self.is_deleted = True
+            self.deleted_at = timezone.now()
+            self.save()
+
+    def restore(self):
+        """
+        Restores a soft-deleted SPG and re-applies the stock additions.
+        """
+        with transaction.atomic():
+            for item in self.items.all():
+                Stock.objects.filter(
+                    product=item.product,
+                    warehouse=self.warehouse
+                ).update(
+                    carton_quantity=F('carton_quantity') + item.carton_quantity,
+                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                )
+            self.is_deleted = False
+            self.deleted_at = None
+            self.save()
 
     def save(self, *args, **kwargs):
         if not self.document_number:

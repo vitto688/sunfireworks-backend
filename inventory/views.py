@@ -259,12 +259,27 @@ class SPGViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPagination
 
-
     def get_queryset(self):
         document_type = self.kwargs.get('document_type', '').upper()
         if document_type not in [choice[0] for choice in SPG.DOCUMENT_TYPE_CHOICES]:
-             return SPG.objects.none()
-        return SPG.objects.filter(document_type=document_type)
+            return SPG.objects.none()
+
+        queryset = SPG.objects.filter(document_type=document_type)
+
+        if self.action == 'restore':
+            return queryset.filter(is_deleted=True)
+
+        view_type = self.request.query_params.get('view', 'active')
+        if view_type == 'deleted':
+            return queryset.filter(is_deleted=True)
+        elif view_type == 'all':
+            return queryset
+        return queryset.filter(is_deleted=False)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['document_type'] = self.kwargs.get('document_type', '').upper()
+        return context
 
     def perform_create(self, serializer):
         document_type = self.kwargs.get('document_type', '').upper()
@@ -276,8 +291,17 @@ class SPGViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         spg = self.get_object()
-        spg.delete()
+        spg.soft_delete()
         return Response(
             {'message': f'SPG document {spg.document_number} has been deleted'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=['POST'])
+    def restore(self, request, *args, **kwargs):
+        spg = self.get_object()
+        spg.restore()
+        return Response(
+            {'message': f'SPG document {spg.document_number} has been restored'},
             status=status.HTTP_200_OK
         )

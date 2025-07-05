@@ -242,7 +242,6 @@ class SPGSerializer(serializers.ModelSerializer):
                 if not attrs.get(field):
                     errors[field] = ["This field is required for IMPORT documents."]
 
-            # Also validate the nested items for IMPORT
             item_errors = []
             required_item_fields = [
                 'inn', 'out', 'pjg', 'warehouse_size', 'packaging_weight',
@@ -267,43 +266,51 @@ class SPGSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        items_data = validated_data.pop('items')
-        with transaction.atomic():
-            # Create the main SPG document
-            spg = SPG.objects.create(**validated_data)
-
-            # Loop through each item in the request
-            for item_data in items_data:
-                # Create the SPGItems entry
-                SPGItems.objects.create(spg=spg, **item_data)
-
-                # Atomically update the stock for the product in the given warehouse
-                Stock.objects.filter(
-                    product=item_data['product'],
-                    warehouse=spg.warehouse
-                ).update(
-                    carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
-                    pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
-                )
-
-        return spg
+            items_data = validated_data.pop('items')
+            with transaction.atomic():
+                spg = SPG.objects.create(**validated_data)
+                for item_data in items_data:
+                    SPGItems.objects.create(spg=spg, **item_data)
+                    Stock.objects.filter(
+                        product=item_data['product'],
+                        warehouse=spg.warehouse
+                    ).update(
+                        carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
+                        pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                    )
+            return spg
 
     def update(self, instance, validated_data):
-        items_data = validated_data.pop('items', None)
+            items_data = validated_data.pop('items')
 
-        with transaction.atomic():
-            # Note: document_number is not updated here, as it's permanent
-            instance.warehouse = validated_data.get('warehouse', instance.warehouse)
-            instance.container_number = validated_data.get('container_number', instance.container_number)
-            instance.vehicle_number = validated_data.get('vehicle_number', instance.vehicle_number)
-            instance.sj_number = validated_data.get('sj_number', instance.sj_number)
-            instance.start_unload = validated_data.get('start_unload', instance.start_unload)
-            instance.finish_load = validated_data.get('finish_load', instance.finish_load)
-            instance.save()
+            with transaction.atomic():
+                for item in instance.items.all():
+                    Stock.objects.filter(
+                        product=item.product,
+                        warehouse=instance.warehouse
+                    ).update(
+                        carton_quantity=F('carton_quantity') - item.carton_quantity,
+                        pack_quantity=F('pack_quantity') - item.pack_quantity
+                    )
 
-            if items_data is not None:
-                SPGItems.objects.filter(spg=instance).delete()
+                instance.document_number = validated_data.get('document_number', instance.document_number)
+                instance.warehouse = validated_data.get('warehouse', instance.warehouse)
+                instance.container_number = validated_data.get('container_number', instance.container_number)
+                instance.vehicle_number = validated_data.get('vehicle_number', instance.vehicle_number)
+                instance.sj_number = validated_data.get('sj_number', instance.sj_number)
+                instance.start_unload = validated_data.get('start_unload', instance.start_unload)
+                instance.finish_load = validated_data.get('finish_load', instance.finish_load)
+                instance.save()
+
+                instance.items.all().delete()
                 for item_data in items_data:
                     SPGItems.objects.create(spg=instance, **item_data)
+                    Stock.objects.filter(
+                        product=item_data['product'],
+                        warehouse=instance.warehouse
+                    ).update(
+                        carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
+                        pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                    )
 
-        return instance
+            return instance
