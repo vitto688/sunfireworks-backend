@@ -7,7 +7,9 @@ from .views import (
     WarehouseViewSet,
     StockViewSet,
     CustomerViewSet,
-    SPGViewSet
+    SPGViewSet,
+    SuratTransferStokViewSet,
+    SPKViewSet,
 )
 
 router = DefaultRouter()
@@ -17,6 +19,8 @@ router.register(r'products', ProductViewSet)
 router.register(r'warehouses', WarehouseViewSet)
 router.register(r'stocks', StockViewSet)
 router.register(r'customers', CustomerViewSet)
+router.register(r'stock-transfers', SuratTransferStokViewSet, basename='stock-transfer')
+router.register(r'spk', SPKViewSet, basename='spk')
 spg_list = SPGViewSet.as_view({
     'get': 'list',
     'post': 'create'

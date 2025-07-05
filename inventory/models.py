@@ -237,15 +237,44 @@ class SPK(models.Model):
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
     notes = models.TextField(blank=True, null=True)
     transaction_date = models.DateTimeField(auto_now_add=True)
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
 
+    def save(self, *args, **kwargs):
+        if not self.document_number:
+            now = timezone.now()
+            last_spk = SPK.objects.filter(
+                created_at__year=now.year,
+                created_at__month=now.month
+            ).order_by('document_number').last()
+
+            sequence = 1
+            if last_spk:
+                last_seq = int(last_spk.document_number.split('/')[-1])
+                sequence = last_seq + 1
+
+            self.document_number = f"{now.strftime('%Y-%m')}/SPK/{sequence:03d}"
+
+        super().save(*args, **kwargs)
+
+    def soft_delete(self):
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save()
+
+    def restore(self):
+        self.is_deleted = False
+        self.deleted_at = None
+        self.save()
+
 
 class SPKItems(models.Model):
-    sj = models.ForeignKey(SPK, on_delete=models.PROTECT)
+    spk = models.ForeignKey(SPK,  related_name='items', on_delete=models.PROTECT)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     carton_quantity = models.IntegerField(default=0)
     pack_quantity = models.IntegerField(default=0)
@@ -314,14 +343,75 @@ class SuratTransferStok(models.Model):
     source_warehouse = models.ForeignKey(Warehouse, related_name='source_transfers', on_delete=models.PROTECT)
     destination_warehouse = models.ForeignKey(Warehouse, related_name='destination_transfers', on_delete=models.PROTECT)
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
 
+    def save(self, *args, **kwargs):
+        if not self.document_number:
+            now = timezone.now()
+            last_transfer = SuratTransferStok.objects.filter(
+                created_at__year=now.year,
+                created_at__month=now.month
+            ).order_by('document_number').last()
+
+            sequence = 1
+            if last_transfer:
+                last_seq = int(last_transfer.document_number.split('/')[-1])
+                sequence = last_seq + 1
+
+            self.document_number = f"{now.strftime('%Y')}/TRS/{sequence:03d}"
+
+        super().save(*args, **kwargs)
+
+    def soft_delete(self):
+        """
+        Marks the transfer as deleted and reverts the stock transfer.
+        (Adds stock back to source, removes from destination)
+        """
+        with transaction.atomic():
+            for item in self.surattransferstokitems_set.all():
+                # Add back to source
+                Stock.objects.filter(product=item.product, warehouse=self.source_warehouse).update(
+                    carton_quantity=F('carton_quantity') + item.carton_quantity,
+                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                )
+                # Remove from destination
+                Stock.objects.filter(product=item.product, warehouse=self.destination_warehouse).update(
+                    carton_quantity=F('carton_quantity') - item.carton_quantity,
+                    pack_quantity=F('pack_quantity') - item.pack_quantity
+                )
+            self.is_deleted = True
+            self.deleted_at = timezone.now()
+            self.save()
+
+    def restore(self):
+        """
+        Restores a soft-deleted transfer and re-applies the stock transfer.
+        (Removes stock from source, adds to destination)
+        """
+        with transaction.atomic():
+            for item in self.surattransferstokitems_set.all():
+                # Remove from source
+                Stock.objects.filter(product=item.product, warehouse=self.source_warehouse).update(
+                    carton_quantity=F('carton_quantity') - item.carton_quantity,
+                    pack_quantity=F('pack_quantity') - item.pack_quantity
+                )
+                # Add to destination
+                Stock.objects.filter(product=item.product, warehouse=self.destination_warehouse).update(
+                    carton_quantity=F('carton_quantity') + item.carton_quantity,
+                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                )
+            self.is_deleted = False
+            self.deleted_at = None
+            self.save()
+
 class SuratTransferStokItems(models.Model):
-    surat_transfer_stok = models.ForeignKey(SuratTransferStok, on_delete=models.PROTECT)
+    surat_transfer_stok = models.ForeignKey(SuratTransferStok, related_name='items', on_delete=models.PROTECT)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     carton_quantity = models.IntegerField(default=0)
     pack_quantity = models.IntegerField(default=0)

@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -14,6 +14,8 @@ from .serializers import (
     StockSerializer,
     CustomerSerializer,
     SPGSerializer,
+    SuratTransferStokSerializer,
+    SPKSerializer,
 )
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -303,5 +305,83 @@ class SPGViewSet(viewsets.ModelViewSet):
         spg.restore()
         return Response(
             {'message': f'SPG document {spg.document_number} has been restored'},
+            status=status.HTTP_200_OK
+        )
+
+
+class SuratTransferStokViewSet(viewsets.ModelViewSet):
+    serializer_class = SuratTransferStokSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        queryset = SuratTransferStok.objects.all()
+
+        if self.action == 'restore':
+            return queryset.filter(is_deleted=True)
+
+        view_type = self.request.query_params.get('view', 'active')
+        if view_type == 'deleted':
+            return queryset.filter(is_deleted=True)
+        elif view_type == 'all':
+            return queryset
+        return queryset.filter(is_deleted=False)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        transfer.soft_delete()
+        return Response(
+            {'message': f'Transfer document {transfer.document_number} has been deleted'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=['POST'])
+    def restore(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        transfer.restore()
+        return Response(
+            {'message': f'Transfer document {transfer.document_number} has been restored'},
+            status=status.HTTP_200_OK
+        )
+
+
+class SPKViewSet(viewsets.ModelViewSet):
+    serializer_class = SPKSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        queryset = SPK.objects.all()
+
+        if self.action == 'restore':
+            return queryset.filter(is_deleted=True)
+
+        view_type = self.request.query_params.get('view', 'active')
+        if view_type == 'deleted':
+            return queryset.filter(is_deleted=True)
+        elif view_type == 'all':
+            return queryset
+        return queryset.filter(is_deleted=False)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        spk = self.get_object()
+        spk.soft_delete()
+        return Response(
+            {'message': f'SPK document {spk.document_number} has been deleted'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=['POST'])
+    def restore(self, request, *args, **kwargs):
+        spk = self.get_object()
+        spk.restore()
+        return Response(
+            {'message': f'SPK document {spk.document_number} has been restored'},
             status=status.HTTP_200_OK
         )

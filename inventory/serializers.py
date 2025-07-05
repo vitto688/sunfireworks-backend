@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems
 from django.db import transaction
 from django.db.models import F
 
@@ -314,3 +314,151 @@ class SPGSerializer(serializers.ModelSerializer):
                     )
 
             return instance
+
+
+class SuratTransferStokItemsSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+
+    class Meta:
+        model = SuratTransferStokItems
+        fields = [
+            'id', 'product', 'product_name', 'product_code',
+            'carton_quantity', 'pack_quantity'
+        ]
+        read_only_fields = ['id', 'product_name', 'product_code']
+
+
+class SuratTransferStokSerializer(serializers.ModelSerializer):
+    items = SuratTransferStokItemsSerializer(many=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    source_warehouse_name = serializers.CharField(source='source_warehouse.name', read_only=True)
+    destination_warehouse_name = serializers.CharField(source='destination_warehouse.name', read_only=True)
+
+    class Meta:
+        model = SuratTransferStok
+        fields = [
+            'id', 'document_number', 'source_warehouse', 'source_warehouse_name',
+            'destination_warehouse', 'destination_warehouse_name', 'user', 'user_email',
+            'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
+        ]
+        read_only_fields = [
+            'id', 'document_number', 'user', 'user_email',
+            'source_warehouse_name', 'destination_warehouse_name',
+            'is_deleted', 'deleted_at', 'created_at', 'updated_at'
+        ]
+
+    def validate(self, data):
+        if data['source_warehouse'] == data['destination_warehouse']:
+            raise serializers.ValidationError("Source and destination warehouses cannot be the same.")
+
+        # Check for sufficient stock in the source warehouse
+        for item_data in data.get('items', []):
+            product = item_data['product']
+            source_stock = Stock.objects.get(product=product, warehouse=data['source_warehouse'])
+
+            if source_stock.carton_quantity < item_data.get('carton_quantity', 0):
+                raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {data['source_warehouse'].name}.")
+            if source_stock.pack_quantity < item_data.get('pack_quantity', 0):
+                raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {data['source_warehouse'].name}.")
+        return data
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        with transaction.atomic():
+            transfer = SuratTransferStok.objects.create(**validated_data)
+            for item_data in items_data:
+                SuratTransferStokItems.objects.create(surat_transfer_stok=transfer, **item_data)
+                # Subtract from source
+                Stock.objects.filter(product=item_data['product'], warehouse=transfer.source_warehouse).update(
+                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                )
+                # Add to destination
+                Stock.objects.filter(product=item_data['product'], warehouse=transfer.destination_warehouse).update(
+                    carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                )
+        return transfer
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items')
+        with transaction.atomic():
+            # Revert the original stock transfer
+            instance.restore()
+
+            # Delete old items
+            instance.items.all().delete()
+
+            # Apply the new stock transfer
+            for item_data in items_data:
+                SuratTransferStokItems.objects.create(surat_transfer_stok=instance, **item_data)
+                # Subtract new quantities from source
+                Stock.objects.filter(product=item_data['product'], warehouse=instance.source_warehouse).update(
+                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                )
+                # Add new quantities to destination
+                Stock.objects.filter(product=item_data['product'], warehouse=instance.destination_warehouse).update(
+                    carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                )
+
+            # Mark the instance as active again (since restore() flips the flag)
+            instance.is_deleted = False
+            instance.deleted_at = None
+            instance.save()
+
+        return instance
+
+
+class SPKItemsSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+
+    class Meta:
+        model = SPKItems
+        fields = [
+            'id', 'product', 'product_name', 'product_code',
+            'carton_quantity', 'pack_quantity'
+        ]
+        read_only_fields = ['id', 'product_name', 'product_code']
+
+
+class SPKSerializer(serializers.ModelSerializer):
+    items = SPKItemsSerializer(many=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+
+    class Meta:
+        model = SPK
+        fields = [
+            'id', 'document_number', 'warehouse', 'warehouse_name',
+            'customer', 'customer_name', 'notes', 'user', 'user_email',
+            'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
+        ]
+        read_only_fields = [
+            'id', 'document_number', 'user', 'user_email',
+            'warehouse_name', 'customer_name', 'is_deleted',
+            'deleted_at', 'created_at', 'updated_at'
+        ]
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        with transaction.atomic():
+            spk = SPK.objects.create(**validated_data)
+            for item_data in items_data:
+                SPKItems.objects.create(spk=spk, **item_data)
+        return spk
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items', None)
+        instance = super().update(instance, validated_data)
+
+        if items_data is not None:
+            with transaction.atomic():
+                instance.items.all().delete()
+                for item_data in items_data:
+                    SPKItems.objects.create(spk=instance, **item_data)
+        return instance
