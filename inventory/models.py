@@ -39,7 +39,7 @@ class Supplier(models.Model):
         self.save()
 
 class Product(models.Model):
-    code = models.CharField(max_length=50, unique=True)
+    code = models.CharField(max_length=50)
     name = models.CharField(max_length=200)
     category = models.ForeignKey(Category, on_delete=models.PROTECT)
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
