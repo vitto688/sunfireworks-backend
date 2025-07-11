@@ -56,6 +56,8 @@ class StockSerializer(serializers.ModelSerializer):
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
     is_product_deleted = serializers.BooleanField(source='product.is_deleted', read_only=True)
+    packing = serializers.ReadOnlyField(source='product.packing')
+    supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
 
     class Meta:
         model = Stock
@@ -64,6 +66,8 @@ class StockSerializer(serializers.ModelSerializer):
             'product',
             'product_name',
             'product_code',
+            'packing',
+            'supplier_name',
             'warehouse',
             'warehouse_name',
             'carton_quantity',
@@ -147,6 +151,7 @@ class SPGItemsSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
 
+    packaging_size = serializers.CharField(max_length=50, required=False, allow_blank=True)
     inn = serializers.CharField(max_length=10, required=False, allow_blank=True)
     out = serializers.CharField(max_length=10, required=False, allow_blank=True)
     pjg = serializers.CharField(max_length=10, required=False, allow_blank=True)
@@ -154,6 +159,9 @@ class SPGItemsSerializer(serializers.ModelSerializer):
     packaging_weight = serializers.CharField(max_length=10, required=False, allow_blank=True)
     warehouse_weight = serializers.CharField(max_length=10, required=False, allow_blank=True)
     production_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
+    packing = serializers.ReadOnlyField(source='product.packing')
+    supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
 
     class Meta:
         model = SPGItems
@@ -173,7 +181,9 @@ class SPGItemsSerializer(serializers.ModelSerializer):
             'warehouse_weight',
             'production_code',
             'created_at',
-            'updated_at'
+            'updated_at',
+            'packing',
+            'supplier_name',
         ]
         read_only_fields = [
             'id',
@@ -210,6 +220,7 @@ class SPGSerializer(serializers.ModelSerializer):
             'user',
             'user_email',
             'transaction_date',
+            'notes',
             'created_at',
             'updated_at',
             'items'
@@ -245,7 +256,7 @@ class SPGSerializer(serializers.ModelSerializer):
             item_errors = []
             required_item_fields = [
                 'inn', 'out', 'pjg', 'warehouse_size', 'packaging_weight',
-                'warehouse_weight', 'production_code'
+                'warehouse_weight', 'production_code', 'packaging_size'
             ]
             for item_data in attrs.get('items', []):
                 current_item_errors = {}
@@ -320,11 +331,14 @@ class SuratTransferStokItemsSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
 
+    packing = serializers.ReadOnlyField(source='product.packing')
+    supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
+
     class Meta:
         model = SuratTransferStokItems
         fields = [
             'id', 'product', 'product_name', 'product_code',
-            'carton_quantity', 'pack_quantity'
+            'carton_quantity', 'pack_quantity', 'packing', 'supplier_name'
         ]
         read_only_fields = ['id', 'product_name', 'product_code']
 
@@ -349,18 +363,45 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        if data['source_warehouse'] == data['destination_warehouse']:
+        """
+        Validates the stock transfer, checking for sufficient stock.
+        """
+        source_warehouse = data.get('source_warehouse')
+        destination_warehouse = data.get('destination_warehouse')
+        items = data.get('items')
+
+        # Rule: Source and destination cannot be the same
+        if source_warehouse == destination_warehouse:
             raise serializers.ValidationError("Source and destination warehouses cannot be the same.")
 
-        # Check for sufficient stock in the source warehouse
-        for item_data in data.get('items', []):
-            product = item_data['product']
-            source_stock = Stock.objects.get(product=product, warehouse=data['source_warehouse'])
+        # For updates, the instance is available in the context
+        is_update = self.instance is not None
 
-            if source_stock.carton_quantity < item_data.get('carton_quantity', 0):
-                raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {data['source_warehouse'].name}.")
-            if source_stock.pack_quantity < item_data.get('pack_quantity', 0):
-                raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {data['source_warehouse'].name}.")
+        for item_data in items:
+            product = item_data['product']
+
+            try:
+                stock_at_source = Stock.objects.get(product=product, warehouse=source_warehouse)
+
+                # On update, we can "use" the stock from the original transfer
+                # before checking if the new amount is available.
+                original_carton_qty = 0
+                original_pack_qty = 0
+                if is_update and self.instance.source_warehouse == source_warehouse:
+                    original_item = self.instance.items.filter(product=product).first()
+                    if original_item:
+                        original_carton_qty = original_item.carton_quantity
+                        original_pack_qty = original_item.pack_quantity
+
+                # Check if available stock is sufficient for the new transfer amount
+                if (stock_at_source.carton_quantity + original_carton_qty) < item_data.get('carton_quantity', 0):
+                    raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {source_warehouse.name}.")
+                if (stock_at_source.pack_quantity + original_pack_qty) < item_data.get('pack_quantity', 0):
+                     raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {source_warehouse.name}.")
+
+            except Stock.DoesNotExist:
+                raise serializers.ValidationError(f"Stock record for {product.name} at {source_warehouse.name} not found.")
+
         return data
 
     def create(self, validated_data):
@@ -383,31 +424,42 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         items_data = validated_data.pop('items')
+        new_source_warehouse = validated_data.get('source_warehouse', instance.source_warehouse)
+        new_destination_warehouse = validated_data.get('destination_warehouse', instance.destination_warehouse)
+
         with transaction.atomic():
-            # Revert the original stock transfer
-            instance.restore()
+            for item in instance.items.all():
+                # Add back to original source
+                Stock.objects.filter(product=item.product, warehouse=instance.source_warehouse).update(
+                    carton_quantity=F('carton_quantity') + item.carton_quantity,
+                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                )
+                # Remove from original destination
+                Stock.objects.filter(product=item.product, warehouse=instance.destination_warehouse).update(
+                    carton_quantity=F('carton_quantity') - item.carton_quantity,
+                    pack_quantity=F('pack_quantity') - item.pack_quantity
+                )
 
-            # Delete old items
-            instance.items.all().delete()
-
-            # Apply the new stock transfer
             for item_data in items_data:
-                SuratTransferStokItems.objects.create(surat_transfer_stok=instance, **item_data)
-                # Subtract new quantities from source
-                Stock.objects.filter(product=item_data['product'], warehouse=instance.source_warehouse).update(
+                # Subtract from new source
+                Stock.objects.filter(product=item_data['product'], warehouse=new_source_warehouse).update(
                     carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
                     pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
                 )
-                # Add new quantities to destination
-                Stock.objects.filter(product=item_data['product'], warehouse=instance.destination_warehouse).update(
+                # Add to new destination
+                Stock.objects.filter(product=item_data['product'], warehouse=new_destination_warehouse).update(
                     carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
                     pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
                 )
 
-            # Mark the instance as active again (since restore() flips the flag)
-            instance.is_deleted = False
-            instance.deleted_at = None
+            instance.source_warehouse = new_source_warehouse
+            instance.destination_warehouse = new_destination_warehouse
             instance.save()
+
+            # Re-create the items for the transfer
+            instance.items.all().delete()
+            for item_data in items_data:
+                SuratTransferStokItems.objects.create(surat_transfer_stok=instance, **item_data)
 
         return instance
 
@@ -416,11 +468,14 @@ class SPKItemsSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
 
+    packing = serializers.ReadOnlyField(source='product.packing')
+    supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
+
     class Meta:
         model = SPKItems
         fields = [
             'id', 'product', 'product_name', 'product_code',
-            'carton_quantity', 'pack_quantity'
+            'carton_quantity', 'pack_quantity', 'packing', 'supplier_name'
         ]
         read_only_fields = ['id', 'product_name', 'product_code']
 
