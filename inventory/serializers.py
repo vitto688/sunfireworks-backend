@@ -643,42 +643,42 @@ class SJSerializer(serializers.ModelSerializer):
                 )
         return sj
 
-        def update(self, instance, validated_data):
-            items_data = validated_data.pop('items')
-            # Get the new warehouse from the request, falling back to the instance's current warehouse if not provided.
-            new_warehouse = validated_data.get('warehouse', instance.warehouse)
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items')
+        # Get the new warehouse from the request, falling back to the instance's current warehouse if not provided.
+        new_warehouse = validated_data.get('warehouse', instance.warehouse)
 
-            with transaction.atomic():
-                # --- Step 1: Revert the old stock from the OLD warehouse ---
-                # This is critical. It adds the quantities back to the original source warehouse.
-                for item in instance.items.all():
-                    Stock.objects.filter(
-                        product=item.product,
-                        warehouse=instance.warehouse  # Use the ORIGINAL warehouse here
-                    ).update(
-                        carton_quantity=F('carton_quantity') + item.carton_quantity,
-                        pack_quantity=F('pack_quantity') + item.pack_quantity
-                    )
+        with transaction.atomic():
+            # --- Step 1: Revert the old stock from the OLD warehouse ---
+            # This is critical. It adds the quantities back to the original source warehouse.
+            for item in instance.items.all():
+                Stock.objects.filter(
+                    product=item.product,
+                    warehouse=instance.warehouse  # Use the ORIGINAL warehouse here
+                ).update(
+                    carton_quantity=F('carton_quantity') + item.carton_quantity,
+                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                )
 
-                # --- Step 2: Apply the new stock to the NEW warehouse ---
-                # This subtracts the new quantities from the potentially new warehouse.
-                for item_data in items_data:
-                     Stock.objects.filter(
-                        product=item_data['product'],
-                        warehouse=new_warehouse  # Use the NEW warehouse here
-                    ).update(
-                        carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
-                        pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
-                    )
+            # --- Step 2: Apply the new stock to the NEW warehouse ---
+            # This subtracts the new quantities from the potentially new warehouse.
+            for item_data in items_data:
+                 Stock.objects.filter(
+                    product=item_data['product'],
+                    warehouse=new_warehouse  # Use the NEW warehouse here
+                ).update(
+                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                )
 
-                # --- Step 3: Update the SJ instance itself and its items ---
-                # Remove read-only fields before calling super().update()
-                validated_data.pop('transaction_date', None)
-                instance = super().update(instance, validated_data) # This updates instance.warehouse to new_warehouse
+            # --- Step 3: Update the SJ instance itself and its items ---
+            # Remove read-only fields before calling super().update()
+            validated_data.pop('transaction_date', None)
+            instance = super().update(instance, validated_data) # This updates instance.warehouse to new_warehouse
 
-                # Re-create the items for the updated SJ
-                instance.items.all().delete()
-                for item_data in items_data:
-                    SJItems.objects.create(sj=instance, **item_data)
+            # Re-create the items for the updated SJ
+            instance.items.all().delete()
+            for item_data in items_data:
+                SJItems.objects.create(sj=instance, **item_data)
 
-            return instance
+        return instance
