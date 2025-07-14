@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems, SJ, SJItems
 from django.db import transaction
 from django.db.models import F
 
@@ -517,3 +517,168 @@ class SPKSerializer(serializers.ModelSerializer):
                 for item_data in items_data:
                     SPKItems.objects.create(spk=instance, **item_data)
         return instance
+
+
+class SJItemsSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+
+    class Meta:
+        model = SJItems
+        fields = [
+            'id', 'product', 'product_name', 'product_code',
+            'carton_quantity', 'pack_quantity'
+        ]
+        read_only_fields = ['id', 'product_name', 'product_code']
+
+
+class SJSerializer(serializers.ModelSerializer):
+    items = SJItemsSerializer(many=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    spk_document_number = serializers.CharField(source='spk.document_number', read_only=True)
+
+    customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), required=False, allow_null=True)
+
+    class Meta:
+        model = SJ
+        fields = [
+            'id',
+            'document_number',
+            'spk',
+            'spk_document_number',
+            'warehouse',
+            'warehouse_name',
+            'is_customer',
+            'customer',
+            'customer_name',
+            'non_customer_name',
+            'vehicle_type',
+            'vehicle_number',
+            'notes',
+            'user',
+            'user_email',
+            'transaction_date',
+            'is_deleted',
+            'deleted_at',
+            'created_at',
+            'updated_at',
+            'items',
+        ]
+        read_only_fields = [
+            'id',
+            'document_number',
+            'user',
+            'user_email',
+            'warehouse_name',
+            'customer_name',
+            'spk_document_number',
+            'transaction_date',
+            'is_deleted',
+            'deleted_at',
+            'created_at',
+            'updated_at',
+        ]
+
+    def validate(self, data):
+        """
+        Custom validation for:
+        1. Conditional customer vs. non-customer fields.
+        2. Sufficient stock in the source warehouse.
+        """
+        # --- Customer and Non-Customer Validation ---
+        is_customer = data.get('is_customer')
+        if is_customer is None and self.instance:
+            is_customer = self.instance.is_customer
+
+        if is_customer:
+            if not data.get('customer'):
+                if not (self.instance and self.instance.customer):
+                    raise serializers.ValidationError({"customer": "This field is required when is_customer is true."})
+            data['non_customer_name'] = ""
+        else:
+            if not data.get('non_customer_name'):
+                if not (self.instance and self.instance.non_customer_name):
+                    raise serializers.ValidationError({"non_customer_name": "This field is required when is_customer is false."})
+            data['customer'] = None
+
+        # --- Stock Validation ---
+        warehouse = data.get('warehouse') or (self.instance and self.instance.warehouse)
+        items_data = data.get('items', [])
+        is_update = self.instance is not None
+
+        for item_data in items_data:
+            product = item_data['product']
+            try:
+                stock = Stock.objects.get(product=product, warehouse=warehouse)
+
+                original_carton = 0
+                original_pack = 0
+                if is_update:
+                    original_item = self.instance.items.filter(product=product).first()
+                    if original_item:
+                        original_carton = original_item.carton_quantity
+                        original_pack = original_item.pack_quantity
+
+                if (stock.carton_quantity + original_carton) < item_data.get('carton_quantity', 0):
+                    raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {warehouse.name}.")
+                if (stock.pack_quantity + original_pack) < item_data.get('pack_quantity', 0):
+                    raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {warehouse.name}.")
+
+            except Stock.DoesNotExist:
+                raise serializers.ValidationError(f"Stock record for {product.name} at {warehouse.name} not found.")
+
+        return data
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        with transaction.atomic():
+            sj = SJ.objects.create(**validated_data)
+            for item_data in items_data:
+                SJItems.objects.create(sj=sj, **item_data)
+                Stock.objects.filter(product=item_data['product'], warehouse=sj.warehouse).update(
+                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                )
+        return sj
+
+        def update(self, instance, validated_data):
+            items_data = validated_data.pop('items')
+            # Get the new warehouse from the request, falling back to the instance's current warehouse if not provided.
+            new_warehouse = validated_data.get('warehouse', instance.warehouse)
+
+            with transaction.atomic():
+                # --- Step 1: Revert the old stock from the OLD warehouse ---
+                # This is critical. It adds the quantities back to the original source warehouse.
+                for item in instance.items.all():
+                    Stock.objects.filter(
+                        product=item.product,
+                        warehouse=instance.warehouse  # Use the ORIGINAL warehouse here
+                    ).update(
+                        carton_quantity=F('carton_quantity') + item.carton_quantity,
+                        pack_quantity=F('pack_quantity') + item.pack_quantity
+                    )
+
+                # --- Step 2: Apply the new stock to the NEW warehouse ---
+                # This subtracts the new quantities from the potentially new warehouse.
+                for item_data in items_data:
+                     Stock.objects.filter(
+                        product=item_data['product'],
+                        warehouse=new_warehouse  # Use the NEW warehouse here
+                    ).update(
+                        carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
+                        pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                    )
+
+                # --- Step 3: Update the SJ instance itself and its items ---
+                # Remove read-only fields before calling super().update()
+                validated_data.pop('transaction_date', None)
+                instance = super().update(instance, validated_data) # This updates instance.warehouse to new_warehouse
+
+                # Re-create the items for the updated SJ
+                instance.items.all().delete()
+                for item_data in items_data:
+                    SJItems.objects.create(sj=instance, **item_data)
+
+            return instance

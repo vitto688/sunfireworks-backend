@@ -10,6 +10,7 @@ from .views import (
     SPGViewSet,
     SuratTransferStokViewSet,
     SPKViewSet,
+    SJViewSet,
 )
 
 router = DefaultRouter()
@@ -21,6 +22,7 @@ router.register(r'stocks', StockViewSet)
 router.register(r'customers', CustomerViewSet)
 router.register(r'stock-transfers', SuratTransferStokViewSet, basename='stock-transfer')
 router.register(r'spk', SPKViewSet, basename='spk')
+router.register(r'sj', SJViewSet, basename='sj')
 spg_list = SPGViewSet.as_view({
     'get': 'list',
     'post': 'create'

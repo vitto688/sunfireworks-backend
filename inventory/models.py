@@ -285,24 +285,101 @@ class SPKItems(models.Model):
 
 
 class SJ(models.Model):
-    document_number = models.CharField(max_length=100)
+    document_number = models.CharField(max_length=100, blank=True)
     spk = models.ForeignKey(SPK, on_delete=models.PROTECT)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
-    customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+
+    is_customer = models.BooleanField(default=True)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True)
+    non_customer_name = models.CharField(max_length=200, blank=True)
+
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
     vehicle_type = models.CharField(max_length=50)
     vehicle_number = models.CharField(max_length=50)
     notes = models.TextField(blank=True, null=True)
+
     transaction_date = models.DateTimeField(auto_now_add=True)
+
+    # Add soft delete fields
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
 
+    def save(self, *args, **kwargs):
+        """
+        Override save to handle custom document number generation.
+        """
+        if not self.document_number:
+            now = timezone.now()
+            year = now.strftime('%Y')
+
+            # Get the last SJ for the current year to determine the next sequence number
+            last_sj = SJ.objects.filter(created_at__year=now.year).order_by('document_number').last()
+            sequence = 1
+            if last_sj:
+                # Assumes the sequence number is always the last part after a '/'
+                last_seq = int(last_sj.document_number.split('/')[-1])
+                sequence = last_seq + 1
+
+            # Determine the warehouse code
+            warehouse_name = self.warehouse.name.upper()
+            if 'ROYAL' in warehouse_name:
+                warehouse_code = 'R'
+            elif 'SALEM' in warehouse_name:
+                warehouse_code = 'S'
+            else:
+                warehouse_code = 'O' # 'O' for Other
+
+            # Generate the prefix based on whether it's for a customer
+            if self.is_customer:
+                # Format: YYYY/KA-W/XXX
+                prefix = f"{year}/KA-{warehouse_code}"
+            else:
+                # Format: YYYY/KA-SJ-W/XXX
+                prefix = f"{year}/KA-SJ-{warehouse_code}"
+
+            self.document_number = f"{prefix}/{sequence:03d}"
+
+        super().save(*args, **kwargs)
+
+    def soft_delete(self):
+        """
+        Marks the SJ as deleted and ADDS the stock back to the warehouse.
+        """
+        with transaction.atomic():
+            for item in self.items.all():
+                Stock.objects.filter(product=item.product, warehouse=self.warehouse).update(
+                    carton_quantity=F('carton_quantity') + item.carton_quantity,
+                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                )
+            self.is_deleted = True
+            self.deleted_at = timezone.now()
+            self.save()
+
+    def restore(self):
+        """
+        Restores a soft-deleted SJ and SUBTRACTS the stock from the warehouse again.
+        """
+        with transaction.atomic():
+            # (We would add a stock check here if needed, but typically restoring assumes it's valid)
+            for item in self.items.all():
+                Stock.objects.filter(product=item.product, warehouse=self.warehouse).update(
+                    carton_quantity=F('carton_quantity') - item.carton_quantity,
+                    pack_quantity=F('pack_quantity') - item.pack_quantity
+                )
+            self.is_deleted = False
+            self.deleted_at = None
+            self.save()
+
 
 class SJItems(models.Model):
-    sj = models.ForeignKey(SJ, on_delete=models.PROTECT)
+    # Add related_name='items' for consistency
+    sj = models.ForeignKey(SJ, related_name='items', on_delete=models.PROTECT)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     carton_quantity = models.IntegerField(default=0)
     pack_quantity = models.IntegerField(default=0)
@@ -315,6 +392,7 @@ class SuratLain(models.Model):
         ('STB', 'STB'),
         ('SPB', 'SPB'),
         ('RETUR_PEMBELIAN', 'Retur Pembelian'),
+        ('RETUR_PENJUALAN', 'Retur Penjualan')
     ]
 
     document_number = models.CharField(max_length=100)

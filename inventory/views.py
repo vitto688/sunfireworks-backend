@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -16,6 +16,7 @@ from .serializers import (
     SPGSerializer,
     SuratTransferStokSerializer,
     SPKSerializer,
+    SJSerializer,
 )
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -383,5 +384,44 @@ class SPKViewSet(viewsets.ModelViewSet):
         spk.restore()
         return Response(
             {'message': f'SPK document {spk.document_number} has been restored'},
+            status=status.HTTP_200_OK
+        )
+
+
+class SJViewSet(viewsets.ModelViewSet):
+    serializer_class = SJSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        queryset = SJ.objects.all()
+
+        if self.action == 'restore':
+            return queryset.filter(is_deleted=True)
+
+        view_type = self.request.query_params.get('view', 'active')
+        if view_type == 'deleted':
+            return queryset.filter(is_deleted=True)
+        elif view_type == 'all':
+            return queryset
+        return queryset.filter(is_deleted=False)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        sj = self.get_object()
+        sj.soft_delete()
+        return Response(
+            {'message': f'SJ document {sj.document_number} has been deleted'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=['POST'])
+    def restore(self, request, *args, **kwargs):
+        sj = self.get_object()
+        sj.restore()
+        return Response(
+            {'message': f'SJ document {sj.document_number} has been restored'},
             status=status.HTTP_200_OK
         )
