@@ -484,12 +484,13 @@ class SPKSerializer(serializers.ModelSerializer):
     items = SPKItemsSerializer(many=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    warehouse_description = serializers.CharField(source='warehouse.description', read_only=True)
     customer_name = serializers.CharField(source='customer.name', read_only=True)
 
     class Meta:
         model = SPK
         fields = [
-            'id', 'document_number', 'warehouse', 'warehouse_name',
+            'id', 'document_number', 'warehouse', 'warehouse_name', 'warehouse_description',
             'customer', 'customer_name', 'notes', 'user', 'user_email',
             'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
         ]
