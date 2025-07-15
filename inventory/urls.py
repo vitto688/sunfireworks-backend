@@ -11,6 +11,7 @@ from .views import (
     SuratTransferStokViewSet,
     SPKViewSet,
     SJViewSet,
+    SuratLainViewSet,
 )
 
 router = DefaultRouter()
@@ -37,9 +38,26 @@ spg_restore = SPGViewSet.as_view({
     'post': 'restore'
 })
 
+surat_lain_list = SuratLainViewSet.as_view({
+    'get': 'list',
+    'post': 'create'
+})
+surat_lain_detail = SuratLainViewSet.as_view({
+    'get': 'retrieve',
+    'put': 'update',
+    'patch': 'partial_update',
+    'delete': 'destroy'
+})
+surat_lain_restore = SuratLainViewSet.as_view({
+    'post': 'restore'
+})
+
 urlpatterns = [
     path('', include(router.urls)),
     path('spg/<str:document_type>/', spg_list, name='spg-list'),
     path('spg/<str:document_type>/<int:pk>/', spg_detail, name='spg-detail'),
     path('spg/<str:document_type>/<int:pk>/restore/', spg_restore, name='spg-restore'),
+    path('<str:document_type_slug>/', surat_lain_list, name='surat-lain-list'),
+    path('<str:document_type_slug>/<int:pk>/', surat_lain_detail, name='surat-lain-detail'),
+    path('<str:document_type_slug>/<int:pk>/restore/', surat_lain_restore, name='surat-lain-restore'),
 ]

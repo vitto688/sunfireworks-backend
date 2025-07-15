@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -17,6 +17,7 @@ from .serializers import (
     SuratTransferStokSerializer,
     SPKSerializer,
     SJSerializer,
+    SuratLainSerializer,
 )
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -425,3 +426,81 @@ class SJViewSet(viewsets.ModelViewSet):
             {'message': f'SJ document {sj.document_number} has been restored'},
             status=status.HTTP_200_OK
         )
+
+
+class SuratLainViewSet(viewsets.ModelViewSet):
+    serializer_class = SuratLainSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        """
+        Gets the queryset for SuratLain, filtered by document type and view status.
+        """
+        doc_type_slug = self.kwargs.get('document_type_slug', '')
+
+        # Corrected mapping from URL slug to the database value
+        type_map = {
+            'STB': 'STB',
+            'SPB': 'SPB',
+            'RETUR_PEMBELIAN': 'RETUR_PEMBELIAN',
+            'RETUR_PENJUALAN': 'RETUR_PENJUALAN'
+        }
+        # Correctly transform the URL slug to match the map keys and model values
+        lookup_key = doc_type_slug.upper().replace('-', '_')
+        document_type = type_map.get(lookup_key)
+
+        # If the slug from the URL is invalid, return an empty queryset
+        if not document_type:
+            return SuratLain.objects.none()
+
+        # Start with the base queryset for the correct document type
+        queryset = SuratLain.objects.filter(document_type=document_type)
+
+        # For the 'restore' action, we must look in the deleted items
+        if self.action == 'restore':
+            return queryset.filter(is_deleted=True)
+
+        # For all other actions, use the 'view' query parameter
+        view_type = self.request.query_params.get('view', 'active')
+        if view_type == 'deleted':
+            return queryset.filter(is_deleted=True)
+        elif view_type == 'all':
+            return queryset
+
+        # The default case for a standard GET request is to return active items
+        return queryset.filter(is_deleted=False)
+
+    def get_serializer_context(self):
+        """
+        Passes the correct document_type to the serializer for validation.
+        """
+        context = super().get_serializer_context()
+        doc_type_slug = self.kwargs.get('document_type_slug', '')
+
+        # Corrected mapping
+        type_map = {
+            'STB': 'STB',
+            'SPB': 'SPB',
+            'RETUR_PEMBELIAN': 'RETUR_PEMBELIAN',
+            'RETUR_PENJUALAN': 'RETUR_PENJUALAN'
+        }
+        # Correctly transform the slug and pass the valid model value to the serializer
+        lookup_key = doc_type_slug.upper().replace('-', '_')
+        context['document_type'] = type_map.get(lookup_key)
+        return context
+
+    def perform_create(self, serializer):
+        # This is correct. The document_type is handled in the serializer's create method.
+        serializer.save(user=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.soft_delete()
+        return Response({'message': f'Document {instance.document_number} has been deleted'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['POST'])
+    def restore(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.restore()
+        return Response({'message': f'Document {instance.document_number} has been restored'}, status=status.HTTP_200_OK)

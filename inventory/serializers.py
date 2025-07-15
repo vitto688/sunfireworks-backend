@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems, SJ, SJItems
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems, SJ, SJItems, SuratLain, SuratLainItems
 from django.db import transaction
 from django.db.models import F
 
@@ -680,5 +680,135 @@ class SJSerializer(serializers.ModelSerializer):
             instance.items.all().delete()
             for item_data in items_data:
                 SJItems.objects.create(sj=instance, **item_data)
+
+        return instance
+
+
+class SuratLainItemsSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+
+    packing = serializers.ReadOnlyField(source='product.packing')
+    supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
+
+    class Meta:
+        model = SuratLainItems
+        fields = ['id', 'product', 'product_name', 'product_code', 'packing', 'supplier_name', 'carton_quantity', 'pack_quantity']
+        read_only_fields = ['id', 'product_name', 'product_code']
+
+
+class SuratLainSerializer(serializers.ModelSerializer):
+    items = SuratLainItemsSerializer(many=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+
+    class Meta:
+        model = SuratLain
+        fields = [
+            'id', 'document_number', 'document_type', 'sj_number', 'warehouse',
+            'warehouse_name', 'user', 'user_email', 'notes', 'is_deleted',
+            'deleted_at', 'transaction_date', 'created_at', 'updated_at', 'items'
+        ]
+        read_only_fields = [
+            'id', 'document_number', 'document_type', 'user', 'user_email',
+            'warehouse_name', 'is_deleted', 'deleted_at',
+            'transaction_date', 'created_at', 'updated_at'
+        ]
+
+    def validate(self, data):
+        """
+        Custom validation for:
+        1. Sufficient stock for OUTGOING document types (SPB, RETUR_PEMBELIAN).
+        """
+        doc_type = self.context.get('document_type')
+
+        # --- Stock Validation for Outgoing Types ---
+        # This check only runs for types that are NOT considered incoming.
+        if doc_type not in SuratLain.INCOMING_TYPES:
+            # Get the warehouse from the incoming data, or from the existing instance on updates.
+            warehouse = data.get('warehouse') or (self.instance and self.instance.warehouse)
+            items_data = data.get('items', [])
+            is_update = self.instance is not None
+
+            for item_data in items_data:
+                product = item_data['product']
+                try:
+                    stock = Stock.objects.get(product=product, warehouse=warehouse)
+
+                    # On update, we can "use" the stock from the original document
+                    # before checking if the new amount is available.
+                    original_carton = 0
+                    original_pack = 0
+                    if is_update:
+                        original_item = self.instance.items.filter(product=product).first()
+                        if original_item:
+                            original_carton = original_item.carton_quantity
+                            original_pack = original_item.pack_quantity
+
+                    # Check if available stock is sufficient for the new outgoing amount
+                    if (stock.carton_quantity + original_carton) < item_data.get('carton_quantity', 0):
+                        raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {warehouse.name}.")
+                    if (stock.pack_quantity + original_pack) < item_data.get('pack_quantity', 0):
+                        raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {warehouse.name}.")
+
+                except Stock.DoesNotExist:
+                    raise serializers.ValidationError(f"Stock record for {product.name} at {warehouse.name} not found.")
+
+        # If all validation passes, return the data.
+        return data
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        doc_type = self.context.get('document_type')
+
+        with transaction.atomic():
+            surat = SuratLain.objects.create(document_type=doc_type, **validated_data)
+            for item_data in items_data:
+                SuratLainItems.objects.create(surat_lain=surat, **item_data)
+
+                # Conditionally add or subtract stock
+                if doc_type in SuratLain.INCOMING_TYPES:
+                    op = F('carton_quantity') + item_data.get('carton_quantity', 0)
+                    pack_op = F('pack_quantity') + item_data.get('pack_quantity', 0)
+                else: # Outgoing
+                    op = F('carton_quantity') - item_data.get('carton_quantity', 0)
+                    pack_op = F('pack_quantity') - item_data.get('pack_quantity', 0)
+
+                Stock.objects.filter(product=item_data['product'], warehouse=surat.warehouse).update(
+                    carton_quantity=op, pack_quantity=pack_op
+                )
+        return surat
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items')
+        new_warehouse = validated_data.get('warehouse', instance.warehouse)
+
+        with transaction.atomic():
+            # Revert old stock movements
+            instance.soft_delete() # This flips is_deleted=True, so we must flip it back
+            instance.is_deleted = False
+            instance.deleted_at = None
+
+            # Update the instance itself
+            instance = super().update(instance, validated_data)
+
+            # Apply new stock movements
+            for item_data in items_data:
+                if instance.document_type in SuratLain.INCOMING_TYPES:
+                    op = F('carton_quantity') + item_data.get('carton_quantity', 0)
+                    pack_op = F('pack_quantity') + item_data.get('pack_quantity', 0)
+                else: # Outgoing
+                    op = F('carton_quantity') - item_data.get('carton_quantity', 0)
+                    pack_op = F('pack_quantity') - item_data.get('pack_quantity', 0)
+
+                Stock.objects.filter(product=item_data['product'], warehouse=new_warehouse).update(
+                    carton_quantity=op, pack_quantity=pack_op
+                )
+
+            # Re-create items and save the instance's final state
+            instance.items.all().delete()
+            for item_data in items_data:
+                SuratLainItems.objects.create(surat_lain=instance, **item_data)
+            instance.save()
 
         return instance

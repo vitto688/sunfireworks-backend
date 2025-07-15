@@ -378,7 +378,6 @@ class SJ(models.Model):
 
 
 class SJItems(models.Model):
-    # Add related_name='items' for consistency
     sj = models.ForeignKey(SJ, related_name='items', on_delete=models.PROTECT)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     carton_quantity = models.IntegerField(default=0)
@@ -388,19 +387,27 @@ class SJItems(models.Model):
 
 
 class SuratLain(models.Model):
+    # Expanded document type choices
     DOCUMENT_TYPE_CHOICES = [
         ('STB', 'STB'),
         ('SPB', 'SPB'),
         ('RETUR_PEMBELIAN', 'Retur Pembelian'),
-        ('RETUR_PENJUALAN', 'Retur Penjualan')
+        ('RETUR_PENJUALAN', 'Retur Penjualan'), # Added new type
     ]
+    # Define which types are for incoming stock
+    INCOMING_TYPES = ['STB', 'RETUR_PENJUALAN']
 
-    document_number = models.CharField(max_length=100)
+    document_number = models.CharField(max_length=100, blank=True)
     document_type = models.CharField(max_length=100, choices=DOCUMENT_TYPE_CHOICES)
-    sj_number = models.CharField(max_length=100)
+    sj_number = models.CharField(max_length=100, blank=True) # Make optional
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
     notes = models.TextField(blank=True, null=True)
+
+    # Add soft delete fields
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
     transaction_date = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -408,9 +415,72 @@ class SuratLain(models.Model):
     class Meta:
         ordering = ['-created_at']
 
+    def save(self, *args, **kwargs):
+        if not self.document_number:
+            now = timezone.now()
+            year_month = now.strftime('%Y-%m')
+
+            last_doc = SuratLain.objects.filter(
+                document_type=self.document_type,
+                created_at__year=now.year,
+                created_at__month=now.month
+            ).order_by('document_number').last()
+
+            sequence = 1
+            if last_doc:
+                last_seq = int(last_doc.document_number.split('/')[-1])
+                sequence = last_seq + 1
+
+            doc_prefix_map = {
+                'STB': 'STB',
+                'SPB': 'SPB',
+                'RETUR_PEMBELIAN': 'RPB',
+                'RETUR_PENJUALAN': 'RPJ',
+            }
+            prefix = doc_prefix_map.get(self.document_type, 'SL')
+            self.document_number = f"{year_month}/{prefix}/{sequence:03d}"
+
+        super().save(*args, **kwargs)
+
+    def soft_delete(self):
+        with transaction.atomic():
+            for item in self.items.all():
+                # If it was an incoming type, deleting it subtracts stock.
+                if self.document_type in self.INCOMING_TYPES:
+                    Stock.objects.filter(product=item.product, warehouse=self.warehouse).update(
+                        carton_quantity=F('carton_quantity') - item.carton_quantity,
+                        pack_quantity=F('pack_quantity') - item.pack_quantity
+                    )
+                # If it was an outgoing type, deleting it adds stock back.
+                else:
+                    Stock.objects.filter(product=item.product, warehouse=self.warehouse).update(
+                        carton_quantity=F('carton_quantity') + item.carton_quantity,
+                        pack_quantity=F('pack_quantity') + item.pack_quantity
+                    )
+            self.is_deleted = True
+            self.deleted_at = timezone.now()
+            self.save()
+
+    def restore(self):
+        with transaction.atomic():
+            for item in self.items.all():
+                # Re-apply the original transaction
+                if self.document_type in self.INCOMING_TYPES:
+                    Stock.objects.filter(product=item.product, warehouse=self.warehouse).update(
+                        carton_quantity=F('carton_quantity') + item.carton_quantity,
+                        pack_quantity=F('pack_quantity') + item.pack_quantity
+                    )
+                else: # Outgoing
+                    Stock.objects.filter(product=item.product, warehouse=self.warehouse).update(
+                        carton_quantity=F('carton_quantity') - item.carton_quantity,
+                        pack_quantity=F('pack_quantity') - item.pack_quantity
+                    )
+            self.is_deleted = False
+            self.deleted_at = None
+            self.save()
 
 class SuratLainItems(models.Model):
-    surat_lain = models.ForeignKey(SuratLain, on_delete=models.PROTECT)
+    surat_lain = models.ForeignKey(SuratLain, related_name='items', on_delete=models.PROTECT)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     carton_quantity = models.IntegerField(default=0)
     pack_quantity = models.IntegerField(default=0)
@@ -430,6 +500,65 @@ class SuratTransferStok(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items')
+        # Get the new warehouses from the request, falling back to the instance's values if not provided.
+        new_source_warehouse = validated_data.get('source_warehouse', instance.source_warehouse)
+        new_destination_warehouse = validated_data.get('destination_warehouse', instance.destination_warehouse)
+
+        with transaction.atomic():
+            # --- Step 1: Revert the original stock transfer ---
+            # This moves stock from the original destination back to the original source.
+            for item in instance.items.all():
+                # Add stock back to the ORIGINAL source warehouse
+                Stock.objects.filter(
+                    product=item.product,
+                    warehouse=instance.source_warehouse
+                ).update(
+                    carton_quantity=F('carton_quantity') + item.carton_quantity,
+                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                )
+                # Remove stock from the ORIGINAL destination warehouse
+                Stock.objects.filter(
+                    product=item.product,
+                    warehouse=instance.destination_warehouse
+                ).update(
+                    carton_quantity=F('carton_quantity') - item.carton_quantity,
+                    pack_quantity=F('pack_quantity') - item.pack_quantity
+                )
+
+            # --- Step 2: Apply the new stock transfer ---
+            # This moves stock from the NEW source to the NEW destination.
+            for item_data in items_data:
+                # Subtract stock from the NEW source warehouse
+                Stock.objects.filter(
+                    product=item_data['product'],
+                    warehouse=new_source_warehouse
+                ).update(
+                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                )
+                # Add stock to the NEW destination warehouse
+                Stock.objects.filter(
+                    product=item_data['product'],
+                    warehouse=new_destination_warehouse
+                ).update(
+                    carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
+                    pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                )
+
+            # --- Step 3: Update the transfer document itself and its items ---
+            # Remove read-only fields before calling super().update()
+            validated_data.pop('transaction_date', None)
+            instance = super().update(instance, validated_data) # This updates the instance's warehouses to the new ones
+
+            # Re-create the items for the updated transfer document
+            instance.items.all().delete()
+            for item_data in items_data:
+                SuratTransferStokItems.objects.create(surat_transfer_stok=instance, **item_data)
+
+        return instance
 
     def save(self, *args, **kwargs):
         if not self.document_number:
