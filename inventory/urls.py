@@ -12,6 +12,8 @@ from .views import (
     SPKViewSet,
     SJViewSet,
     SuratLainViewSet,
+    StockInfoReportView,
+    StockTransferReportView,
 )
 
 router = DefaultRouter()
@@ -60,4 +62,6 @@ urlpatterns = [
     path('<str:document_type_slug>/', surat_lain_list, name='surat-lain-list'),
     path('<str:document_type_slug>/<int:pk>/', surat_lain_detail, name='surat-lain-detail'),
     path('<str:document_type_slug>/<int:pk>/restore/', surat_lain_restore, name='surat-lain-restore'),
+    path('report/stock-info/', StockInfoReportView.as_view(), name='report-stock-info'),
+    path('report/stock-transfer/', StockTransferReportView.as_view(), name='report-stock-transfer'),
 ]

@@ -1,10 +1,10 @@
-from rest_framework import viewsets, status, serializers
+from rest_framework import viewsets, status, serializers, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -18,7 +18,10 @@ from .serializers import (
     SPKSerializer,
     SJSerializer,
     SuratLainSerializer,
+    StockInfoReportSerializer,
+    StockTransferReportSerializer,
 )
+from .filters import StockTransferReportFilter
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -504,3 +507,28 @@ class SuratLainViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         instance.restore()
         return Response({'message': f'Document {instance.document_number} has been restored'}, status=status.HTTP_200_OK)
+
+
+class StockInfoReportView(generics.ListAPIView):
+    """
+    Provides a report of all stock levels for all products in all warehouses.
+    """
+    serializer_class = StockInfoReportSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+
+    # We only want to see stock for products that are not deleted.
+    queryset = Stock.objects.filter(product__is_deleted=False).order_by('product__name', 'warehouse__name')
+
+
+class StockTransferReportView(generics.ListAPIView):
+    """
+    Provides a summary report of all items in active (not deleted) stock transfers.
+    """
+    serializer_class = StockTransferReportSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    filterset_class = StockTransferReportFilter
+
+    # The queryset contains all items that belong to an active (not soft-deleted) transfer document.
+    queryset = SuratTransferStokItems.objects.filter(surat_transfer_stok__is_deleted=False).order_by('-surat_transfer_stok__created_at')

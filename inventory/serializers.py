@@ -816,3 +816,56 @@ class SuratLainSerializer(serializers.ModelSerializer):
             instance.save()
 
         return instance
+
+# --- REPORTING SERIALIZERS ---
+
+class StockInfoReportSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the main stock information report.
+    Gathers detailed information for each stock record.
+    """
+    product_code = serializers.CharField(source='product.code', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_category = serializers.CharField(source='product.category.name', read_only=True)
+    supplier_name = serializers.CharField(source='product.supplier.name', read_only=True)
+    packing = serializers.CharField(source='product.packing', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+
+    class Meta:
+        model = Stock
+        fields = [
+            'product_code',
+            'product_name',
+            'product_category',
+            'supplier_name',
+            'packing',
+            'carton_quantity',
+            'pack_quantity',
+            'warehouse_name',
+        ]
+
+
+class StockTransferReportSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the stock transfer report.
+    Gathers summary data for each item in an active stock transfer.
+    """
+    transaction_date = serializers.DateTimeField(source='surat_transfer_stok.created_at', format="%Y-%m-%d")
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    supplier_name = serializers.CharField(source='product.supplier.name', read_only=True)
+    packing = serializers.CharField(source='product.packing', read_only=True)
+    source_warehouse = serializers.CharField(source='surat_transfer_stok.source_warehouse.name', read_only=True)
+    destination_warehouse = serializers.CharField(source='surat_transfer_stok.destination_warehouse.name', read_only=True)
+
+    class Meta:
+        model = SuratTransferStokItems
+        fields = [
+            'transaction_date',
+            'product_name',
+            'supplier_name',
+            'packing',
+            'carton_quantity',
+            'pack_quantity',
+            'source_warehouse',
+            'destination_warehouse',
+        ]
