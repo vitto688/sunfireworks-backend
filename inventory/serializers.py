@@ -139,6 +139,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             'name',
             'address',
             'contact_number',
+            'upline',
             'is_deleted',
             'deleted_at',
             'created_at',
@@ -486,12 +487,14 @@ class SPKSerializer(serializers.ModelSerializer):
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     warehouse_description = serializers.CharField(source='warehouse.description', read_only=True)
     customer_name = serializers.CharField(source='customer.name', read_only=True)
+    customer_address = serializers.CharField(source='customer.address', read_only=True)
+    customer_upline = serializers.CharField(source='customer.upline', read_only=True)
 
     class Meta:
         model = SPK
         fields = [
             'id', 'document_number', 'warehouse', 'warehouse_name', 'warehouse_description',
-            'customer', 'customer_name', 'notes', 'user', 'user_email',
+            'customer', 'customer_name', 'customer_address', 'customer_upline', 'notes', 'user', 'user_email',
             'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
         ]
         read_only_fields = [
