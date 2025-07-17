@@ -850,6 +850,7 @@ class StockTransferReportSerializer(serializers.ModelSerializer):
     Serializer for the stock transfer report.
     Gathers summary data for each item in an active stock transfer.
     """
+    document_number = serializers.CharField(source='surat_transfer_stok.document_number', read_only=True)
     transaction_date = serializers.DateTimeField(source='surat_transfer_stok.created_at', format="%Y-%m-%d")
     product_name = serializers.CharField(source='product.name', read_only=True)
     supplier_name = serializers.CharField(source='product.supplier.name', read_only=True)
@@ -860,6 +861,7 @@ class StockTransferReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = SuratTransferStokItems
         fields = [
+            'document_number',
             'transaction_date',
             'product_name',
             'supplier_name',
@@ -869,3 +871,78 @@ class StockTransferReportSerializer(serializers.ModelSerializer):
             'source_warehouse',
             'destination_warehouse',
         ]
+
+
+class ReturnReportSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the purchase and sales return reports.
+    """
+    document_number = serializers.CharField(source='surat_lain.document_number', read_only=True)
+    transaction_date = serializers.DateTimeField(source='surat_lain.transaction_date', format="%Y-%m-%d")
+    warehouse_name = serializers.CharField(source='surat_lain.warehouse.name', read_only=True)
+    notes = serializers.CharField(source='surat_lain.notes', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    supplier_name = serializers.CharField(source='product.supplier.name', read_only=True)
+    packing = serializers.CharField(source='product.packing', read_only=True)
+
+    class Meta:
+        model = SuratLainItems
+        fields = [
+            'document_number',
+            'transaction_date',
+            'warehouse_name',
+            'product_name',
+            'supplier_name',
+            'packing',
+            'carton_quantity',
+            'pack_quantity',
+            'notes',
+        ]
+
+
+class DocumentSummaryReportSerializer(serializers.ModelSerializer):
+    """
+    A dynamic and generic serializer for document summary reports.
+    It adjusts its fields based on the report type provided by the view.
+    """
+    document_number = serializers.CharField(source='surat_lain.document_number', read_only=True)
+    transaction_date = serializers.DateTimeField(source='surat_lain.transaction_date', format="%Y-%m-%d")
+    warehouse_name = serializers.CharField(source='surat_lain.warehouse.name', read_only=True)
+    notes = serializers.CharField(source='surat_lain.notes', read_only=True, allow_blank=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    packing = serializers.CharField(source='product.packing', read_only=True)
+
+    # --- Conditionally included fields ---
+    sj_number = serializers.CharField(source='surat_lain.sj_number', read_only=True)
+    supplier_name = serializers.CharField(source='product.supplier.name', read_only=True)
+
+    class Meta:
+        model = SuratLainItems
+        fields = [
+            'document_number',
+            'transaction_date',
+            'sj_number',          # Will be removed for return reports
+            'supplier_name',      # Will be removed for STB/SPB reports
+            'warehouse_name',
+            'product_code',
+            'product_name',
+            'packing',
+            'carton_quantity',
+            'pack_quantity',
+            'notes',
+        ]
+
+    def __init__(self, *args, **kwargs):
+        """
+        Override init to dynamically remove fields based on the report type.
+        """
+        # This must be called first
+        super().__init__(*args, **kwargs)
+
+        # Get the report_type from the context passed by the view
+        report_type = self.context.get('report_type')
+
+        if report_type == 'return':
+            # For return reports, we don't need the sj_number
+            self.fields.pop('sj_number')

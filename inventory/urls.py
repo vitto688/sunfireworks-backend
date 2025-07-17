@@ -14,6 +14,10 @@ from .views import (
     SuratLainViewSet,
     StockInfoReportView,
     StockTransferReportView,
+    ReturPenjualanReportView,
+    ReturPembelianReportView,
+    PenerimaanBarangReportView,
+    PengeluaranBarangReportView,
 )
 
 router = DefaultRouter()
@@ -64,4 +68,8 @@ urlpatterns = [
     path('<str:document_type_slug>/<int:pk>/restore/', surat_lain_restore, name='surat-lain-restore'),
     path('report/stock-info/', StockInfoReportView.as_view(), name='report-stock-info'),
     path('report/stock-transfer/', StockTransferReportView.as_view(), name='report-stock-transfer'),
+    path('report/retur-pembelian/', ReturPembelianReportView.as_view(), name='report-retur-pembelian'),
+    path('report/retur-penjualan/', ReturPenjualanReportView.as_view(), name='report-retur-penjualan'),
+    path('report/penerimaan-barang/', PenerimaanBarangReportView.as_view(), name='report-penerimaan-barang'),
+    path('report/pengeluaran-barang/', PengeluaranBarangReportView.as_view(), name='report-pengeluaran-barang'),
 ]

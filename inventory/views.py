@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -20,8 +20,10 @@ from .serializers import (
     SuratLainSerializer,
     StockInfoReportSerializer,
     StockTransferReportSerializer,
+    ReturnReportSerializer,
+    DocumentSummaryReportSerializer,
 )
-from .filters import StockTransferReportFilter
+from .filters import StockTransferReportFilter, ReturnReportFilter
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -517,7 +519,6 @@ class StockInfoReportView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPagination
 
-    # We only want to see stock for products that are not deleted.
     queryset = Stock.objects.filter(product__is_deleted=False).order_by('product__name', 'warehouse__name')
 
 
@@ -530,5 +531,72 @@ class StockTransferReportView(generics.ListAPIView):
     pagination_class = CustomPagination
     filterset_class = StockTransferReportFilter
 
-    # The queryset contains all items that belong to an active (not soft-deleted) transfer document.
     queryset = SuratTransferStokItems.objects.filter(surat_transfer_stok__is_deleted=False).order_by('-surat_transfer_stok__created_at')
+
+
+class ReturPembelianReportView(generics.ListAPIView):
+    serializer_class = DocumentSummaryReportSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    filterset_class = ReturnReportFilter
+    queryset = SuratLainItems.objects.filter(
+        surat_lain__document_type='RETUR_PEMBELIAN',
+        surat_lain__is_deleted=False
+    ).order_by('-surat_lain__transaction_date')
+
+    def get_serializer_context(self):
+        """Pass report_type to the serializer."""
+        context = super().get_serializer_context()
+        context['report_type'] = 'return'
+        return context
+
+
+class ReturPenjualanReportView(generics.ListAPIView):
+    serializer_class = DocumentSummaryReportSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    filterset_class = ReturnReportFilter
+    queryset = SuratLainItems.objects.filter(
+        surat_lain__document_type='RETUR_PENJUALAN',
+        surat_lain__is_deleted=False
+    ).order_by('-surat_lain__transaction_date')
+
+    def get_serializer_context(self):
+        """Pass report_type to the serializer."""
+        context = super().get_serializer_context()
+        context['report_type'] = 'return'
+        return context
+
+
+class PenerimaanBarangReportView(generics.ListAPIView):
+    serializer_class = DocumentSummaryReportSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    filterset_class = ReturnReportFilter
+    queryset = SuratLainItems.objects.filter(
+        surat_lain__document_type='STB',
+        surat_lain__is_deleted=False
+    ).order_by('-surat_lain__transaction_date')
+
+    def get_serializer_context(self):
+        """Pass report_type to the serializer."""
+        context = super().get_serializer_context()
+        context['report_type'] = 'document'
+        return context
+
+
+class PengeluaranBarangReportView(generics.ListAPIView):
+    serializer_class = DocumentSummaryReportSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    filterset_class = ReturnReportFilter
+    queryset = SuratLainItems.objects.filter(
+        surat_lain__document_type='SPB',
+        surat_lain__is_deleted=False
+    ).order_by('-surat_lain__transaction_date')
+
+    def get_serializer_context(self):
+        """Pass report_type to the serializer."""
+        context = super().get_serializer_context()
+        context['report_type'] = 'document'
+        return context
