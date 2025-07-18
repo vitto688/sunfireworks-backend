@@ -541,6 +541,7 @@ class SJSerializer(serializers.ModelSerializer):
     user_email = serializers.CharField(source='user.email', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     customer_name = serializers.CharField(source='customer.name', read_only=True)
+    customer_upline = serializers.CharField(source='customer.upline', read_only=True)
     spk_document_number = serializers.CharField(source='spk.document_number', read_only=True)
 
     customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), required=False, allow_null=True)
@@ -557,6 +558,7 @@ class SJSerializer(serializers.ModelSerializer):
             'is_customer',
             'customer',
             'customer_name',
+            'customer_upline',
             'non_customer_name',
             'vehicle_type',
             'vehicle_number',
