@@ -197,7 +197,7 @@ class SPGItemsSerializer(serializers.ModelSerializer):
 
 class SPGSerializer(serializers.ModelSerializer):
     items = SPGItemsSerializer(many=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
 
     container_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
@@ -219,7 +219,7 @@ class SPGSerializer(serializers.ModelSerializer):
             'start_unload',
             'finish_load',
             'user',
-            'user_email',
+            'user_username',
             'transaction_date',
             'notes',
             'created_at',
@@ -230,7 +230,7 @@ class SPGSerializer(serializers.ModelSerializer):
             'id',
             'document_number',
             'user',
-            'user_email',
+            'user_username',
             'warehouse_name',
             'transaction_date',
             'created_at',
@@ -346,7 +346,7 @@ class SuratTransferStokItemsSerializer(serializers.ModelSerializer):
 
 class SuratTransferStokSerializer(serializers.ModelSerializer):
     items = SuratTransferStokItemsSerializer(many=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
     source_warehouse_name = serializers.CharField(source='source_warehouse.name', read_only=True)
     destination_warehouse_name = serializers.CharField(source='destination_warehouse.name', read_only=True)
 
@@ -354,11 +354,11 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
         model = SuratTransferStok
         fields = [
             'id', 'document_number', 'source_warehouse', 'source_warehouse_name',
-            'destination_warehouse', 'destination_warehouse_name', 'user', 'user_email',
+            'destination_warehouse', 'destination_warehouse_name', 'user', 'user_username',
             'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
         ]
         read_only_fields = [
-            'id', 'document_number', 'user', 'user_email',
+            'id', 'document_number', 'user', 'user_username',
             'source_warehouse_name', 'destination_warehouse_name',
             'is_deleted', 'deleted_at', 'created_at', 'updated_at'
         ]
@@ -483,7 +483,7 @@ class SPKItemsSerializer(serializers.ModelSerializer):
 
 class SPKSerializer(serializers.ModelSerializer):
     items = SPKItemsSerializer(many=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     warehouse_description = serializers.CharField(source='warehouse.description', read_only=True)
     customer_name = serializers.CharField(source='customer.name', read_only=True)
@@ -494,11 +494,11 @@ class SPKSerializer(serializers.ModelSerializer):
         model = SPK
         fields = [
             'id', 'document_number', 'warehouse', 'warehouse_name', 'warehouse_description',
-            'customer', 'customer_name', 'customer_address', 'customer_upline', 'notes', 'user', 'user_email',
+            'customer', 'customer_name', 'customer_address', 'customer_upline', 'notes', 'user', 'user_username',
             'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
         ]
         read_only_fields = [
-            'id', 'document_number', 'user', 'user_email',
+            'id', 'document_number', 'user', 'user_username',
             'warehouse_name', 'customer_name', 'is_deleted',
             'deleted_at', 'created_at', 'updated_at'
         ]
@@ -538,9 +538,10 @@ class SJItemsSerializer(serializers.ModelSerializer):
 
 class SJSerializer(serializers.ModelSerializer):
     items = SJItemsSerializer(many=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     customer_name = serializers.CharField(source='customer.name', read_only=True)
+    customer_address = serializers.CharField(source='customer.address', read_only=True)
     customer_upline = serializers.CharField(source='customer.upline', read_only=True)
     spk_document_number = serializers.CharField(source='spk.document_number', read_only=True)
 
@@ -558,13 +559,14 @@ class SJSerializer(serializers.ModelSerializer):
             'is_customer',
             'customer',
             'customer_name',
+            'customer_address',
             'customer_upline',
             'non_customer_name',
             'vehicle_type',
             'vehicle_number',
             'notes',
             'user',
-            'user_email',
+            'user_username',
             'transaction_date',
             'is_deleted',
             'deleted_at',
@@ -576,7 +578,7 @@ class SJSerializer(serializers.ModelSerializer):
             'id',
             'document_number',
             'user',
-            'user_email',
+            'user_username',
             'warehouse_name',
             'customer_name',
             'spk_document_number',
@@ -705,18 +707,18 @@ class SuratLainItemsSerializer(serializers.ModelSerializer):
 
 class SuratLainSerializer(serializers.ModelSerializer):
     items = SuratLainItemsSerializer(many=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
 
     class Meta:
         model = SuratLain
         fields = [
             'id', 'document_number', 'document_type', 'sj_number', 'warehouse',
-            'warehouse_name', 'user', 'user_email', 'notes', 'is_deleted',
+            'warehouse_name', 'user', 'user_username', 'notes', 'is_deleted',
             'deleted_at', 'transaction_date', 'created_at', 'updated_at', 'items'
         ]
         read_only_fields = [
-            'id', 'document_number', 'document_type', 'user', 'user_email',
+            'id', 'document_number', 'document_type', 'user', 'user_username',
             'warehouse_name', 'is_deleted', 'deleted_at',
             'transaction_date', 'created_at', 'updated_at'
         ]
