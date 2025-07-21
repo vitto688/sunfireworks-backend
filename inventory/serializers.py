@@ -2,6 +2,23 @@ from rest_framework import serializers
 from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems, SJ, SJItems, SuratLain, SuratLainItems
 from django.db import transaction
 from django.db.models import F
+from django.utils import timezone
+import datetime
+
+
+class FlexDateTimeField(serializers.DateTimeField):
+    """
+    A custom DateTimeField that can accept a date-only string (YYYY-MM-DD)
+    and automatically set the time to the beginning of the day (00:00:00).
+    """
+    def to_internal_value(self, value):
+        try:
+            date_obj = datetime.datetime.strptime(value, '%Y-%m-%d').date()
+            datetime_obj = datetime.datetime.combine(date_obj, datetime.time.min)
+            return timezone.make_aware(datetime_obj, timezone.get_current_timezone())
+        except (ValueError, TypeError):
+            return super().to_internal_value(value)
+
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -205,6 +222,8 @@ class SPGSerializer(serializers.ModelSerializer):
     start_unload = serializers.CharField(max_length=50, required=False, allow_blank=True)
     finish_load = serializers.CharField(max_length=50, required=False, allow_blank=True)
 
+    transaction_date = FlexDateTimeField(required=False)
+
     class Meta:
         model = SPG
         fields = [
@@ -232,11 +251,20 @@ class SPGSerializer(serializers.ModelSerializer):
             'user',
             'user_username',
             'warehouse_name',
-            'transaction_date',
             'created_at',
             'updated_at',
             'document_type'
         ]
+
+    def __init__(self, *args, **kwargs):
+        """
+        Dynamically set the transaction_date to read-only for non-IMPORT types.
+        """
+        super().__init__(*args, **kwargs)
+        document_type = self.context.get('document_type')
+        if document_type != 'IMPORT':
+            if 'transaction_date' in self.fields:
+                self.fields['transaction_date'].read_only = True
 
     def validate(self, attrs):
         """
@@ -527,11 +555,14 @@ class SJItemsSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
 
+    packing = serializers.ReadOnlyField(source='product.packing')
+    supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
+
     class Meta:
         model = SJItems
         fields = [
             'id', 'product', 'product_name', 'product_code',
-            'carton_quantity', 'pack_quantity'
+            'carton_quantity', 'pack_quantity', 'packing', 'supplier_name'
         ]
         read_only_fields = ['id', 'product_name', 'product_code']
 

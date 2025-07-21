@@ -129,7 +129,7 @@ class SPG(models.Model):
     finish_load = models.CharField(max_length=50)
     notes = models.TextField(null=True, blank=True)
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
-    transaction_date = models.DateTimeField(auto_now_add=True)
+    transaction_date = models.DateTimeField(default=timezone.now)
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
