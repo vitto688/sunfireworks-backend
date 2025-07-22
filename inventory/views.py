@@ -263,6 +263,18 @@ class CustomPagination(PageNumberPagination):
         })
 
 
+class OptionalPagination(CustomPagination):
+    """
+    A custom pagination class that allows disabling pagination via a query parameter.
+    To disable pagination, add `?paginate=false` to the request URL.
+    """
+    def paginate_queryset(self, queryset, request, view=None):
+        if request.query_params.get('paginate', '').lower() == 'false':
+            return None
+
+        return super().paginate_queryset(queryset, request, view)
+
+
 class SPGViewSet(viewsets.ModelViewSet):
     serializer_class = SPGSerializer
     permission_classes = [IsAuthenticated]
@@ -517,7 +529,7 @@ class StockInfoReportView(generics.ListAPIView):
     """
     serializer_class = StockInfoReportSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    pagination_class = OptionalPagination
 
     queryset = Stock.objects.filter(product__is_deleted=False).order_by('product__name', 'warehouse__name')
 
@@ -528,7 +540,7 @@ class StockTransferReportView(generics.ListAPIView):
     """
     serializer_class = StockTransferReportSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    pagination_class = OptionalPagination
     filterset_class = StockTransferReportFilter
 
     queryset = SuratTransferStokItems.objects.filter(surat_transfer_stok__is_deleted=False).order_by('-surat_transfer_stok__created_at')
@@ -537,7 +549,7 @@ class StockTransferReportView(generics.ListAPIView):
 class ReturPembelianReportView(generics.ListAPIView):
     serializer_class = DocumentSummaryReportSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    pagination_class = OptionalPagination
     filterset_class = ReturnReportFilter
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='RETUR_PEMBELIAN',
@@ -554,7 +566,7 @@ class ReturPembelianReportView(generics.ListAPIView):
 class ReturPenjualanReportView(generics.ListAPIView):
     serializer_class = DocumentSummaryReportSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    pagination_class = OptionalPagination
     filterset_class = ReturnReportFilter
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='RETUR_PENJUALAN',
@@ -571,7 +583,7 @@ class ReturPenjualanReportView(generics.ListAPIView):
 class PenerimaanBarangReportView(generics.ListAPIView):
     serializer_class = DocumentSummaryReportSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    pagination_class = OptionalPagination
     filterset_class = ReturnReportFilter
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='STB',
@@ -588,7 +600,7 @@ class PenerimaanBarangReportView(generics.ListAPIView):
 class PengeluaranBarangReportView(generics.ListAPIView):
     serializer_class = DocumentSummaryReportSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    pagination_class = OptionalPagination
     filterset_class = ReturnReportFilter
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='SPB',
