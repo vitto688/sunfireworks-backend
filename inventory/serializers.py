@@ -256,16 +256,6 @@ class SPGSerializer(serializers.ModelSerializer):
             'document_type'
         ]
 
-    def __init__(self, *args, **kwargs):
-        """
-        Dynamically set the transaction_date to read-only for non-IMPORT types.
-        """
-        super().__init__(*args, **kwargs)
-        document_type = self.context.get('document_type')
-        if document_type != 'IMPORT':
-            if 'transaction_date' in self.fields:
-                self.fields['transaction_date'].read_only = True
-
     def validate(self, attrs):
         """
         Conditionally require fields only for 'IMPORT' document type.
@@ -363,11 +353,13 @@ class SuratTransferStokItemsSerializer(serializers.ModelSerializer):
     packing = serializers.ReadOnlyField(source='product.packing')
     supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
 
+    transaction_date = FlexDateTimeField(required=False)
+
     class Meta:
         model = SuratTransferStokItems
         fields = [
             'id', 'product', 'product_name', 'product_code',
-            'carton_quantity', 'pack_quantity', 'packing', 'supplier_name'
+            'carton_quantity', 'pack_quantity', 'packing', 'transaction_date', 'supplier_name'
         ]
         read_only_fields = ['id', 'product_name', 'product_code']
 
@@ -512,22 +504,20 @@ class SPKItemsSerializer(serializers.ModelSerializer):
 class SPKSerializer(serializers.ModelSerializer):
     items = SPKItemsSerializer(many=True)
     user_username = serializers.CharField(source='user.username', read_only=True)
-    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
-    warehouse_description = serializers.CharField(source='warehouse.description', read_only=True)
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     customer_address = serializers.CharField(source='customer.address', read_only=True)
     customer_upline = serializers.CharField(source='customer.upline', read_only=True)
+    transaction_date = FlexDateTimeField(required=False)
 
     class Meta:
         model = SPK
         fields = [
-            'id', 'document_number', 'warehouse', 'warehouse_name', 'warehouse_description',
+            'id', 'document_number',
             'customer', 'customer_name', 'customer_address', 'customer_upline', 'notes', 'user', 'user_username',
-            'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
+            'is_deleted', 'deleted_at', 'transaction_date', 'created_at', 'updated_at', 'items'
         ]
         read_only_fields = [
-            'id', 'document_number', 'user', 'user_username',
-            'warehouse_name', 'customer_name', 'is_deleted',
+            'id', 'document_number', 'user', 'user_username', 'customer_name', 'is_deleted',
             'deleted_at', 'created_at', 'updated_at'
         ]
 
@@ -575,6 +565,7 @@ class SJSerializer(serializers.ModelSerializer):
     customer_address = serializers.CharField(source='customer.address', read_only=True)
     customer_upline = serializers.CharField(source='customer.upline', read_only=True)
     spk_document_number = serializers.CharField(source='spk.document_number', read_only=True)
+    transaction_date = FlexDateTimeField(required=False)
 
     customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), required=False, allow_null=True)
 
@@ -613,7 +604,6 @@ class SJSerializer(serializers.ModelSerializer):
             'warehouse_name',
             'customer_name',
             'spk_document_number',
-            'transaction_date',
             'is_deleted',
             'deleted_at',
             'created_at',
@@ -740,6 +730,7 @@ class SuratLainSerializer(serializers.ModelSerializer):
     items = SuratLainItemsSerializer(many=True)
     user_username = serializers.CharField(source='user.username', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    transaction_date = FlexDateTimeField(required=False)
 
     class Meta:
         model = SuratLain
@@ -750,8 +741,7 @@ class SuratLainSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'document_number', 'document_type', 'user', 'user_username',
-            'warehouse_name', 'is_deleted', 'deleted_at',
-            'transaction_date', 'created_at', 'updated_at'
+            'warehouse_name', 'is_deleted', 'deleted_at', 'created_at', 'updated_at'
         ]
 
     def validate(self, data):

@@ -23,7 +23,15 @@ from .serializers import (
     ReturnReportSerializer,
     DocumentSummaryReportSerializer,
 )
-from .filters import StockTransferReportFilter, ReturnReportFilter
+from .filters import (
+    StockTransferReportFilter,
+    ReturnReportFilter,
+    SPGFilter,
+    SPKFilter,
+    SJFilter,
+    SuratTransferStokFilter,
+    SuratLainFilter,
+)
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -278,7 +286,8 @@ class OptionalPagination(CustomPagination):
 class SPGViewSet(viewsets.ModelViewSet):
     serializer_class = SPGSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    filterset_class = SPGFilter
+    pagination_class = OptionalPagination
 
     def get_queryset(self):
         document_type = self.kwargs.get('document_type', '').upper()
@@ -331,7 +340,8 @@ class SPGViewSet(viewsets.ModelViewSet):
 class SuratTransferStokViewSet(viewsets.ModelViewSet):
     serializer_class = SuratTransferStokSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    filterset_class = SuratTransferStokFilter
+    pagination_class = OptionalPagination
 
     def get_queryset(self):
         queryset = SuratTransferStok.objects.all()
@@ -370,7 +380,8 @@ class SuratTransferStokViewSet(viewsets.ModelViewSet):
 class SPKViewSet(viewsets.ModelViewSet):
     serializer_class = SPKSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    filterset_class = SPKFilter
+    pagination_class = OptionalPagination
 
     def get_queryset(self):
         queryset = SPK.objects.all()
@@ -409,7 +420,8 @@ class SPKViewSet(viewsets.ModelViewSet):
 class SJViewSet(viewsets.ModelViewSet):
     serializer_class = SJSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    pagination_class = OptionalPagination
+    filterset_class = SJFilter
 
     def get_queryset(self):
         queryset = SJ.objects.all()
@@ -448,7 +460,8 @@ class SJViewSet(viewsets.ModelViewSet):
 class SuratLainViewSet(viewsets.ModelViewSet):
     serializer_class = SuratLainSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = CustomPagination
+    filterset_class = SuratLainFilter
+    pagination_class = OptionalPagination
 
     def get_queryset(self):
         """
@@ -530,7 +543,6 @@ class StockInfoReportView(generics.ListAPIView):
     serializer_class = StockInfoReportSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = OptionalPagination
-
     queryset = Stock.objects.filter(product__is_deleted=False).order_by('product__name', 'warehouse__name')
 
 

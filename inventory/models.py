@@ -234,11 +234,10 @@ class SPGItems(models.Model):
 
 class SPK(models.Model):
     document_number = models.CharField(max_length=100)
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
     notes = models.TextField(blank=True, null=True)
-    transaction_date = models.DateTimeField(auto_now_add=True)
+    transaction_date = models.DateTimeField(default=timezone.now)
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -298,9 +297,8 @@ class SJ(models.Model):
     vehicle_number = models.CharField(max_length=50)
     notes = models.TextField(blank=True, null=True)
 
-    transaction_date = models.DateTimeField(auto_now_add=True)
+    transaction_date = models.DateTimeField(default=timezone.now)
 
-    # Add soft delete fields
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
@@ -408,7 +406,7 @@ class SuratLain(models.Model):
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
-    transaction_date = models.DateTimeField(auto_now_add=True)
+    transaction_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -495,6 +493,7 @@ class SuratTransferStok(models.Model):
     user = models.ForeignKey('users.User', on_delete=models.PROTECT)
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
+    transaction_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
