@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems, SJ, SJItems, SuratLain, SuratLainItems
 from django.db import transaction
-from django.db.models import F
+from django.db.models import Sum, F, IntegerField
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 import datetime
 
@@ -493,13 +494,49 @@ class SPKItemsSerializer(serializers.ModelSerializer):
     packing = serializers.ReadOnlyField(source='product.packing')
     supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
 
+    unfulfilled_carton_quantity = serializers.SerializerMethodField()
+    unfulfilled_pack_quantity = serializers.SerializerMethodField()
+
     class Meta:
         model = SPKItems
         fields = [
             'id', 'product', 'product_name', 'product_code',
-            'carton_quantity', 'pack_quantity', 'packing', 'supplier_name'
+            'carton_quantity', 'pack_quantity', 'packing', 'supplier_name',
+            'unfulfilled_carton_quantity',
+            'unfulfilled_pack_quantity',
         ]
         read_only_fields = ['id', 'product_name', 'product_code']
+
+    def get_unfulfilled_carton_quantity(self, obj):
+        """
+        Calculates the remaining carton quantity by subtracting all fulfilled SJ items.
+        'obj' here is an instance of SPKItems.
+        """
+        # The annotation is now performed here, per item.
+        # It sums the carton_quantity of all SJItems that reference this SPK item's parent SPK and product.
+        fulfilled_cartons = SJItems.objects.filter(
+            sj__spk=obj.spk,
+            product=obj.product,
+            sj__is_deleted=False
+        ).aggregate(
+            total=Coalesce(Sum('carton_quantity'), 0)
+        )['total']
+
+        return obj.carton_quantity - fulfilled_cartons
+
+    def get_unfulfilled_pack_quantity(self, obj):
+        """
+        Calculates the remaining pack quantity by subtracting all fulfilled SJ items.
+        """
+        fulfilled_packs = SJItems.objects.filter(
+            sj__spk=obj.spk,
+            product=obj.product,
+            sj__is_deleted=False
+        ).aggregate(
+            total=Coalesce(Sum('pack_quantity'), 0)
+        )['total']
+
+        return obj.pack_quantity - fulfilled_packs
 
 
 class SPKSerializer(serializers.ModelSerializer):
@@ -616,7 +653,55 @@ class SJSerializer(serializers.ModelSerializer):
         Custom validation for:
         1. Conditional customer vs. non-customer fields.
         2. Sufficient stock in the source warehouse.
+        3. Ensuring SJ quantities do not exceed the unfulfilled quantities from the parent SPK.
         """
+        # --- Get the SPK and items from the request data ---
+        # On a create, 'spk' will be in data. On an update, it's on the instance.
+        spk = data.get('spk') or (self.instance and self.instance.spk)
+        items_data = data.get('items')
+
+        if not spk:
+            raise serializers.ValidationError({"spk": "An SPK must be specified."})
+
+        for item_data in items_data:
+            product = item_data['product']
+
+            # --- Validation 1: Check if the product is in the original SPK ---
+            try:
+                spk_item = SPKItems.objects.get(spk=spk, product=product)
+            except SPKItems.DoesNotExist:
+                raise serializers.ValidationError({
+                    f"product_{product.id}": f"Product '{product.name}' is not listed in the original SPK ({spk.document_number})."
+                })
+
+            # --- Validation 2: Check if the quantity exceeds the unfulfilled amount ---
+            # Calculate total quantity already fulfilled for this product on other SJs for this SPK.
+            # We must exclude the current SJ instance if we are performing an update.
+            existing_sjs_for_spk = SJ.objects.filter(spk=spk, is_deleted=False)
+            if self.instance:
+                existing_sjs_for_spk = existing_sjs_for_spk.exclude(pk=self.instance.pk)
+
+            fulfilled_cartons = existing_sjs_for_spk.filter(items__product=product).aggregate(
+                total=Coalesce(Sum('items__carton_quantity'), 0)
+            )['total']
+
+            fulfilled_packs = existing_sjs_for_spk.filter(items__product=product).aggregate(
+                total=Coalesce(Sum('items__pack_quantity'), 0)
+            )['total']
+
+            unfulfilled_cartons = spk_item.carton_quantity - fulfilled_cartons
+            unfulfilled_packs = spk_item.pack_quantity - fulfilled_packs
+
+            if item_data.get('carton_quantity', 0) > unfulfilled_cartons:
+                raise serializers.ValidationError({
+                    f"product_{product.id}": f"Carton quantity for '{product.name}' ({item_data.get('carton_quantity', 0)}) exceeds the unfulfilled quantity on the SPK ({unfulfilled_cartons})."
+                })
+
+            if item_data.get('pack_quantity', 0) > unfulfilled_packs:
+                raise serializers.ValidationError({
+                    f"product_{product.id}": f"Pack quantity for '{product.name}' ({item_data.get('pack_quantity', 0)}) exceeds the unfulfilled quantity on the SPK ({unfulfilled_packs})."
+                })
+
         # --- Customer and Non-Customer Validation ---
         is_customer = data.get('is_customer')
         if is_customer is None and self.instance:
