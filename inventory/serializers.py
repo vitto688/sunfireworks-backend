@@ -353,13 +353,11 @@ class SuratTransferStokItemsSerializer(serializers.ModelSerializer):
     packing = serializers.ReadOnlyField(source='product.packing')
     supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
 
-    transaction_date = FlexDateTimeField(required=False)
-
     class Meta:
         model = SuratTransferStokItems
         fields = [
             'id', 'product', 'product_name', 'product_code',
-            'carton_quantity', 'pack_quantity', 'packing', 'transaction_date', 'supplier_name'
+            'carton_quantity', 'pack_quantity', 'packing', 'supplier_name'
         ]
         read_only_fields = ['id', 'product_name', 'product_code']
 
@@ -369,13 +367,14 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source='user.username', read_only=True)
     source_warehouse_name = serializers.CharField(source='source_warehouse.name', read_only=True)
     destination_warehouse_name = serializers.CharField(source='destination_warehouse.name', read_only=True)
+    transaction_date = FlexDateTimeField(required=False)
 
     class Meta:
         model = SuratTransferStok
         fields = [
             'id', 'document_number', 'source_warehouse', 'source_warehouse_name',
             'destination_warehouse', 'destination_warehouse_name', 'user', 'user_username',
-            'is_deleted', 'deleted_at', 'created_at', 'updated_at', 'items'
+            'is_deleted', 'deleted_at', 'transaction_date', 'created_at', 'updated_at', 'items'
         ]
         read_only_fields = [
             'id', 'document_number', 'user', 'user_username',
@@ -876,7 +875,7 @@ class StockTransferReportSerializer(serializers.ModelSerializer):
     Gathers summary data for each item in an active stock transfer.
     """
     document_number = serializers.CharField(source='surat_transfer_stok.document_number', read_only=True)
-    transaction_date = serializers.DateTimeField(source='surat_transfer_stok.created_at', format="%Y-%m-%d")
+    transaction_date = serializers.DateTimeField(source='surat_transfer_stok.transaction_date', format="%Y-%m-%d")
     product_name = serializers.CharField(source='product.name', read_only=True)
     supplier_name = serializers.CharField(source='product.supplier.name', read_only=True)
     packing = serializers.CharField(source='product.packing', read_only=True)

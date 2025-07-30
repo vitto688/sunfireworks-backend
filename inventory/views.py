@@ -24,6 +24,7 @@ from .serializers import (
     DocumentSummaryReportSerializer,
 )
 from .filters import (
+    StockInfoReportFilter,
     StockTransferReportFilter,
     ReturnReportFilter,
     SPGFilter,
@@ -543,6 +544,7 @@ class StockInfoReportView(generics.ListAPIView):
     serializer_class = StockInfoReportSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = OptionalPagination
+    filterset_class = StockInfoReportFilter
     queryset = Stock.objects.filter(product__is_deleted=False).order_by('product__name', 'warehouse__name')
 
 
