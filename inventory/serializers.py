@@ -72,6 +72,7 @@ class StockSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
+    product_category = serializers.CharField(source='product.category.name', read_only=True)
     is_product_deleted = serializers.BooleanField(source='product.is_deleted', read_only=True)
     packing = serializers.ReadOnlyField(source='product.packing')
     supplier_name = serializers.ReadOnlyField(source='product.supplier.name')
@@ -83,6 +84,7 @@ class StockSerializer(serializers.ModelSerializer):
             'product',
             'product_name',
             'product_code',
+            'product_category',
             'packing',
             'supplier_name',
             'warehouse',

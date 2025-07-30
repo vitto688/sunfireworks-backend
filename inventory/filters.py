@@ -1,5 +1,6 @@
 import django_filters
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 import datetime
 from .models import SuratTransferStokItems, SuratLainItems, SPG, SPK, SJ, SuratTransferStok, SuratLain, Stock
@@ -24,6 +25,32 @@ class AwareDateTimeFilter(django_filters.DateTimeFilter):
                 self.lookup_expr = 'lt' # Use 'lt' (less than) instead of 'lte'
 
         return super().filter(qs, value)
+
+
+class StockFilter(django_filters.FilterSet):
+    """
+    FilterSet for the Stock ViewSet.
+    Includes a combined search for product name and code.
+    """
+    # This filter is named 'search' and will call the method below
+    search = django_filters.CharFilter(
+        method='filter_by_name_or_code',
+        label="Search by product name or code"
+    )
+
+    class Meta:
+        model = Stock
+        fields = ['search']
+
+    def filter_by_name_or_code(self, queryset, name, value):
+        """
+        Custom filter method that searches for the 'value' in either
+        the product's name or the product's code.
+        The search is case-insensitive.
+        """
+        return queryset.filter(
+            Q(product__name__icontains=value) | Q(product__code__icontains=value)
+        )
 
 
 class StockInfoReportFilter(django_filters.FilterSet):

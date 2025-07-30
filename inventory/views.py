@@ -32,6 +32,7 @@ from .filters import (
     SJFilter,
     SuratTransferStokFilter,
     SuratLainFilter,
+    StockFilter,
 )
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -154,6 +155,7 @@ class StockViewSet(viewsets.ModelViewSet):
     queryset = Stock.objects.filter(product__is_deleted=False)
     serializer_class = StockSerializer
     permission_classes = [IsAuthenticated]
+    filterset_class = StockFilter
 
     def get_queryset(self):
         # Only show stocks for non-deleted products
