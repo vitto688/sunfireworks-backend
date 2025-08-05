@@ -294,6 +294,9 @@ class SJ(models.Model):
     ]
 
     document_number = models.CharField(max_length=100, blank=True)
+
+    sequence_number = models.PositiveIntegerField(editable=False, db_index=True, null=True)
+
     spk = models.ForeignKey(SPK, on_delete=models.PROTECT)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
 
@@ -319,55 +322,36 @@ class SJ(models.Model):
         ordering = ['-created_at']
 
     def save(self, *args, **kwargs):
-        if not self.document_number:
+        """
+        Generates a document number based on a yearly resetting sequence.
+        """
+        if not self.pk: # Check if the object is new
             now = timezone.now()
             year = now.strftime('%Y')
             month_year = now.strftime('%m%Y')
 
-            # --- Format Type 1: YYYY/.../XXX (Based on yearly sequence) ---
+            # Find the highest sequence number used in the current year.
+            last_doc = SJ.objects.filter(created_at__year=now.year).order_by('-sequence_number').first()
+
+            new_sequence = 1
+            if last_doc and last_doc.sequence_number is not None:
+                new_sequence = last_doc.sequence_number + 1
+
+            self.sequence_number = new_sequence
+            sequence_str = f"{self.sequence_number:03d}"
+
             if self.sj_type in ['KA', 'KA-SJ']:
-                last_doc = SJ.objects.filter(
-                    sj_type=self.sj_type,
-                    created_at__year=now.year
-                ).order_by('document_number').last()
-
-                sequence = 1
-                if last_doc:
-                    last_seq = int(last_doc.document_number.split('/')[-1])
-                    sequence = last_seq + 1
-
-                # Determine warehouse code
                 warehouse_name = self.warehouse.name.upper()
-                warehouse_code = 'O' # Default to 'Other'
-                if 'ROYAL' in warehouse_name:
-                    warehouse_code = 'R'
-                elif 'SALEM' in warehouse_name:
-                    warehouse_code = 'S'
+                warehouse_code = 'O'
+                if 'ROYAL' in warehouse_name: warehouse_code = 'R'
+                elif 'SALEM' in warehouse_name: warehouse_code = 'S'
 
-                if self.sj_type == 'KA':
-                    self.document_number = f"{year}/KA-{warehouse_code}/{sequence:03d}"
-                elif self.sj_type == 'KA-SJ':
-                    self.document_number = f"{year}/KA-SJ-{warehouse_code}/{sequence:03d}"
+                if self.sj_type == 'KA': self.document_number = f"{year}/KA-{warehouse_code}/{sequence_str}"
+                elif self.sj_type == 'KA-SJ': self.document_number = f"{year}/KA-SJ-{warehouse_code}/{sequence_str}"
 
-            # --- Format Type 2: XXX/.../MMYYYY (Based on monthly sequence) ---
             elif self.sj_type in ['SO/B', 'SO/K', 'P-B', 'P-K']:
-                last_doc = SJ.objects.filter(
-                    sj_type=self.sj_type,
-                    created_at__year=now.year,
-                    created_at__month=now.month
-                ).order_by('document_number').last()
-
-                sequence = 1
-                if last_doc:
-                    # Assumes sequence is the first part: XXX-...
-                    last_seq = int(last_doc.document_number.split('-')[0])
-                    sequence = last_seq + 1
-
-                # Format: XXX-SO/B/MMYYYY or XXX/P-B/MMYYYY
-                if self.sj_type in ['SO/B', 'SO/K']:
-                    self.document_number = f"{sequence:03d}-{self.sj_type}/{month_year}"
-                elif self.sj_type in ['P-B', 'P-K']:
-                     self.document_number = f"{sequence:03d}/{self.sj_type}/{month_year}"
+                if self.sj_type in ['SO/B', 'SO/K']: self.document_number = f"{sequence_str}-{self.sj_type}/{month_year}"
+                elif self.sj_type in ['P-B', 'P-K']: self.document_number = f"{sequence_str}/{self.sj_type}/{month_year}"
 
         super().save(*args, **kwargs)
 
