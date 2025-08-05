@@ -616,7 +616,7 @@ class SJSerializer(serializers.ModelSerializer):
             'spk_document_number',
             'warehouse',
             'warehouse_name',
-            'is_customer',
+            'sj_type',
             'customer',
             'customer_name',
             'customer_address',
@@ -701,22 +701,6 @@ class SJSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     f"product_{product.id}": f"Pack quantity for '{product.name}' ({item_data.get('pack_quantity', 0)}) exceeds the unfulfilled quantity on the SPK ({unfulfilled_packs})."
                 })
-
-        # --- Customer and Non-Customer Validation ---
-        is_customer = data.get('is_customer')
-        if is_customer is None and self.instance:
-            is_customer = self.instance.is_customer
-
-        if is_customer:
-            if not data.get('customer'):
-                if not (self.instance and self.instance.customer):
-                    raise serializers.ValidationError({"customer": "This field is required when is_customer is true."})
-            data['non_customer_name'] = ""
-        else:
-            if not data.get('non_customer_name'):
-                if not (self.instance and self.instance.non_customer_name):
-                    raise serializers.ValidationError({"non_customer_name": "This field is required when is_customer is false."})
-            data['customer'] = None
 
         # --- Stock Validation ---
         warehouse = data.get('warehouse') or (self.instance and self.instance.warehouse)
