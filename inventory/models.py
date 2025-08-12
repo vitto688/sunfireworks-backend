@@ -374,7 +374,6 @@ class SJ(models.Model):
         Restores a soft-deleted SJ and SUBTRACTS the stock from the warehouse again.
         """
         with transaction.atomic():
-            # (We would add a stock check here if needed, but typically restoring assumes it's valid)
             for item in self.items.all():
                 Stock.objects.filter(product=item.product, warehouse=self.warehouse).update(
                     carton_quantity=F('carton_quantity') - item.carton_quantity,

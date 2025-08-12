@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Q
+from django.db.models import Case, When, Value, IntegerField, Q
 from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems
 from .serializers import (
     CategorySerializer,
@@ -158,8 +158,32 @@ class StockViewSet(viewsets.ModelViewSet):
     filterset_class = StockFilter
 
     def get_queryset(self):
-        # Only show stocks for non-deleted products
-        return Stock.objects.filter(product__is_deleted=False)
+        """
+        Overrides the default queryset to apply a custom sort order.
+        """
+        # --- Custom Sort Logic ---
+        category_order = Case(
+            When(product__category__name='ROMAN CANDLE', then=Value(1)),
+            When(product__category__name='SMALL ITEMS', then=Value(2)),
+            When(product__category__name='CAKE', then=Value(3)),
+            When(product__category__name='BAWANG', then=Value(4)),
+            When(product__category__name='KAWAT', then=Value(5)),
+            When(product__category__name='CAKE DISPLAY', then=Value(6)),
+            When(product__category__name='SINGLE ROW', then=Value(7)),
+            When(product__category__name='SINGLE SHOT', then=Value(8)),
+            When(product__category__name='DAY FIREWORKS CAKE', then=Value(9)),
+            When(product__category__name='DAY FIREWORKS SHELL', then=Value(10)),
+            When(product__category__name='DISPLAY SHELL', then=Value(11)),
+            When(product__category__name='LAIN LAIN', then=Value(12)),
+            default=Value(12),  # Any other category gets the same order as 'LAIN LAIN'
+            output_field=IntegerField(),
+        )
+
+        queryset = Stock.objects.filter(product__is_deleted=False).annotate(
+            category_order=category_order
+        ).order_by('category_order', 'product__name')
+
+        return queryset
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve', 'by_warehouse', 'by_product']:
@@ -547,7 +571,33 @@ class StockInfoReportView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     pagination_class = OptionalPagination
     filterset_class = StockInfoReportFilter
-    queryset = Stock.objects.filter(product__is_deleted=False).order_by('product__name', 'warehouse__name')
+
+    def get_queryset(self):
+        """
+        Applies a custom sort order to the stock info report.
+        """
+        category_order = Case(
+            When(product__category__name='ROMAN CANDLE', then=Value(1)),
+            When(product__category__name='SMALL ITEMS', then=Value(2)),
+            When(product__category__name='CAKE', then=Value(3)),
+            When(product__category__name='BAWANG', then=Value(4)),
+            When(product__category__name='KAWAT', then=Value(5)),
+            When(product__category__name='CAKE DISPLAY', then=Value(6)),
+            When(product__category__name='SINGLE ROW', then=Value(7)),
+            When(product__category__name='SINGLE SHOT', then=Value(8)),
+            When(product__category__name='DAY FIREWORKS CAKE', then=Value(9)),
+            When(product__category__name='DAY FIREWORKS SHELL', then=Value(10)),
+            When(product__category__name='DISPLAY SHELL', then=Value(11)),
+            When(product__category__name='LAIN LAIN', then=Value(12)),
+            default=Value(12),
+            output_field=IntegerField(),
+        )
+
+        queryset = Stock.objects.filter(product__is_deleted=False).annotate(
+            category_order=category_order
+        ).order_by('category_order', 'product__name')
+
+        return queryset
 
 
 class StockTransferReportView(generics.ListAPIView):
