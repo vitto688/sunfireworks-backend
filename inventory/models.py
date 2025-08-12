@@ -665,3 +665,46 @@ def create_warehouse_stocks(sender, instance, created, **kwargs):
             for product in products
         ]
         Stock.objects.bulk_create(stock_objects)
+
+
+class StockAdjustment(models.Model):
+    document_number = models.CharField(max_length=100, blank=True)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    user = models.ForeignKey('users.User', on_delete=models.PROTECT)
+    reason = models.TextField()
+    transaction_date = models.DateTimeField(default=timezone.now)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.document_number:
+            now = timezone.now()
+            last_adj = StockAdjustment.objects.filter(
+                created_at__year=now.year,
+                created_at__month=now.month
+            ).order_by('document_number').last()
+
+            sequence = 1
+            if last_adj:
+                last_seq = int(last_adj.document_number.split('/')[-1])
+                sequence = last_seq + 1
+
+            self.document_number = f"{now.strftime('%Y-%m')}/SA/{sequence:03d}"
+
+        super().save(*args, **kwargs)
+
+
+class StockAdjustmentItem(models.Model):
+    stock_adjustment = models.ForeignKey(StockAdjustment, related_name='items', on_delete=models.PROTECT)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    old_carton_quantity = models.IntegerField()
+    old_pack_quantity = models.IntegerField()
+    new_carton_quantity = models.IntegerField()
+    new_pack_quantity = models.IntegerField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems, SJ, SJItems, SuratLain, SuratLainItems
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SPGItems, SuratTransferStok, SuratTransferStokItems, SPK, SPKItems, SJ, SJItems, SuratLain, SuratLainItems, StockAdjustment, StockAdjustmentItem
 from django.db import transaction
 from django.db.models import Sum, F, IntegerField
 from django.db.models.functions import Coalesce
@@ -1041,3 +1041,66 @@ class DocumentSummaryReportSerializer(serializers.ModelSerializer):
         if report_type == 'return':
             # For return reports, we don't need the sj_number
             self.fields.pop('sj_number')
+
+
+class StockAdjustmentItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+    # The 'old' quantities will be read-only, populated automatically.
+    old_carton_quantity = serializers.IntegerField(read_only=True)
+    old_pack_quantity = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = StockAdjustmentItem
+        fields = [
+            'id', 'product', 'product_name', 'product_code',
+            'old_carton_quantity', 'old_pack_quantity',
+            'new_carton_quantity', 'new_pack_quantity'
+        ]
+        read_only_fields = ['id', 'product_name', 'product_code']
+
+
+class StockAdjustmentSerializer(serializers.ModelSerializer):
+    items = StockAdjustmentItemSerializer(many=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    transaction_date = FlexDateTimeField(required=False, format="%Y-%m-%d")
+
+    class Meta:
+        model = StockAdjustment
+        fields = [
+            'id', 'document_number', 'warehouse', 'warehouse_name',
+            'user', 'user_email', 'reason', 'transaction_date',
+            'created_at', 'updated_at', 'items'
+        ]
+        read_only_fields = [
+            'id', 'document_number', 'user', 'user_email', 'warehouse_name',
+            'created_at', 'updated_at'
+        ]
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        warehouse = validated_data.get('warehouse')
+
+        with transaction.atomic():
+            adjustment = StockAdjustment.objects.create(**validated_data)
+
+            for item_data in items_data:
+                product = item_data['product']
+
+                # Get the current stock record, locking it for the transaction.
+                stock = Stock.objects.select_for_update().get(product=product, warehouse=warehouse)
+
+                # Populate old quantities from the current stock
+                item_data['old_carton_quantity'] = stock.carton_quantity
+                item_data['old_pack_quantity'] = stock.pack_quantity
+
+                # Create the audit record (the adjustment item)
+                StockAdjustmentItem.objects.create(stock_adjustment=adjustment, **item_data)
+
+                # Update the actual stock level to the new quantities
+                stock.carton_quantity = item_data['new_carton_quantity']
+                stock.pack_quantity = item_data['new_pack_quantity']
+                stock.save()
+
+        return adjustment

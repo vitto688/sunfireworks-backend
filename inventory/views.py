@@ -1,10 +1,10 @@
-from rest_framework import viewsets, status, serializers, generics
+from rest_framework import viewsets, status, serializers, generics, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Case, When, Value, IntegerField, Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems, StockAdjustment
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -22,6 +22,7 @@ from .serializers import (
     StockTransferReportSerializer,
     ReturnReportSerializer,
     DocumentSummaryReportSerializer,
+    StockAdjustmentSerializer,
 )
 from .filters import (
     StockInfoReportFilter,
@@ -151,7 +152,11 @@ class WarehouseViewSet(viewsets.ModelViewSet):
     serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated]
 
-class StockViewSet(viewsets.ModelViewSet):
+class StockViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet
+):
     queryset = Stock.objects.filter(product__is_deleted=False)
     serializer_class = StockSerializer
     permission_classes = [IsAuthenticated]
@@ -175,7 +180,7 @@ class StockViewSet(viewsets.ModelViewSet):
             When(product__category__name='DAY FIREWORKS SHELL', then=Value(10)),
             When(product__category__name='DISPLAY SHELL', then=Value(11)),
             When(product__category__name='LAIN LAIN', then=Value(12)),
-            default=Value(12),  # Any other category gets the same order as 'LAIN LAIN'
+            default=Value(12),
             output_field=IntegerField(),
         )
 
@@ -678,3 +683,22 @@ class PengeluaranBarangReportView(generics.ListAPIView):
         context = super().get_serializer_context()
         context['report_type'] = 'document'
         return context
+
+
+class StockAdjustmentViewSet(
+    mixins.ListModelMixin,
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet
+):
+    """
+    Handles the creation and viewing of Stock Adjustment documents.
+    Updates and Deletes are not allowed to preserve the audit trail.
+    """
+    serializer_class = StockAdjustmentSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    queryset = StockAdjustment.objects.all().order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
