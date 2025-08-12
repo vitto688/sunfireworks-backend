@@ -225,7 +225,7 @@ class SPGSerializer(serializers.ModelSerializer):
     start_unload = serializers.CharField(max_length=50, required=False, allow_blank=True)
     finish_load = serializers.CharField(max_length=50, required=False, allow_blank=True)
 
-    transaction_date = FlexDateTimeField(required=False)
+    transaction_date = FlexDateTimeField(required=False, format="%Y-%m-%d")
 
     class Meta:
         model = SPG
@@ -370,7 +370,7 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source='user.username', read_only=True)
     source_warehouse_name = serializers.CharField(source='source_warehouse.name', read_only=True)
     destination_warehouse_name = serializers.CharField(source='destination_warehouse.name', read_only=True)
-    transaction_date = FlexDateTimeField(required=False)
+    transaction_date = FlexDateTimeField(required=False, format="%Y-%m-%d")
 
     class Meta:
         model = SuratTransferStok
@@ -545,7 +545,7 @@ class SPKSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     customer_address = serializers.CharField(source='customer.address', read_only=True)
     customer_upline = serializers.CharField(source='customer.upline', read_only=True)
-    transaction_date = FlexDateTimeField(required=False)
+    transaction_date = FlexDateTimeField(required=False, format="%Y-%m-%d")
 
     class Meta:
         model = SPK
@@ -603,7 +603,7 @@ class SJSerializer(serializers.ModelSerializer):
     customer_address = serializers.CharField(source='customer.address', read_only=True)
     customer_upline = serializers.CharField(source='customer.upline', read_only=True)
     spk_document_number = serializers.CharField(source='spk.document_number', read_only=True)
-    transaction_date = FlexDateTimeField(required=False)
+    transaction_date = FlexDateTimeField(required=False, format="%Y-%m-%d")
 
     customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), required=False, allow_null=True)
 
@@ -800,7 +800,7 @@ class SuratLainSerializer(serializers.ModelSerializer):
     items = SuratLainItemsSerializer(many=True)
     user_username = serializers.CharField(source='user.username', read_only=True)
     warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
-    transaction_date = FlexDateTimeField(required=False)
+    transaction_date = FlexDateTimeField(required=False, format="%Y-%m-%d")
 
     class Meta:
         model = SuratLain
