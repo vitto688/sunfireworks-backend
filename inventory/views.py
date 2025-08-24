@@ -780,7 +780,7 @@ class StockInReportView(generics.ListAPIView):
             output_field=IntegerField(),
         )
 
-        return SPGItems.objects.filter(spk__is_deleted=False).annotate(
+        return SPGItems.objects.filter(spg__is_deleted=False).annotate(
             product_code=F('product__code'),
             product_name=F('product__name'),
             packing=F('product__packing'),
