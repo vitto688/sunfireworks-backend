@@ -3,8 +3,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Case, When, Value, IntegerField, Q
-from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems, StockAdjustment
+from django.db.models import Case, When, Value, IntegerField, Q, Sum, F
+from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems, StockAdjustment, SJItems, SPGItems
 from .serializers import (
     CategorySerializer,
     SupplierSerializer,
@@ -23,6 +23,7 @@ from .serializers import (
     ReturnReportSerializer,
     DocumentSummaryReportSerializer,
     StockAdjustmentSerializer,
+    StockReportSerializer,
 )
 from .filters import (
     StockInfoReportFilter,
@@ -34,6 +35,8 @@ from .filters import (
     SuratTransferStokFilter,
     SuratLainFilter,
     StockFilter,
+    StockOutReportFilter,
+    StockInReportFilter,
 )
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -594,7 +597,7 @@ class StockInfoReportView(generics.ListAPIView):
             When(product__category__name='DAY FIREWORKS SHELL', then=Value(10)),
             When(product__category__name='DISPLAY SHELL', then=Value(11)),
             When(product__category__name='LAIN LAIN', then=Value(12)),
-            default=Value(12),
+            default=Value(13),
             output_field=IntegerField(),
         )
 
@@ -702,3 +705,89 @@ class StockAdjustmentViewSet(
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+class StockOutReportView(generics.ListAPIView):
+    """
+    API view for the stock out report.
+    """
+    serializer_class = StockReportSerializer
+    filterset_class = StockOutReportFilter
+    pagination_class = OptionalPagination
+
+    def get_queryset(self):
+        """
+        Aggregates the stock out data, excluding items from deleted SJ documents,
+        and applies a custom sort order.
+        """
+        category_order = Case(
+            When(product__category__name='ROMAN CANDLE', then=Value(1)),
+            When(product__category__name='SMALL ITEMS', then=Value(2)),
+            When(product__category__name='CAKE', then=Value(3)),
+            When(product__category__name='BAWANG', then=Value(4)),
+            When(product__category__name='KAWAT', then=Value(5)),
+            When(product__category__name='CAKE DISPLAY', then=Value(6)),
+            When(product__category__name='SINGLE ROW', then=Value(7)),
+            When(product__category__name='SINGLE SHOT', then=Value(8)),
+            When(product__category__name='DAY FIREWORKS CAKE', then=Value(9)),
+            When(product__category__name='DAY FIREWORKS SHELL', then=Value(10)),
+            When(product__category__name='DISPLAY SHELL', then=Value(11)),
+            When(product__category__name='LAIN LAIN', then=Value(12)),
+            default=Value(13), # Changed to 13 to avoid conflicts
+            output_field=IntegerField(),
+        )
+
+        return SJItems.objects.filter(sj__is_deleted=False).annotate(
+            product_code=F('product__code'),
+            product_name=F('product__name'),
+            packing=F('product__packing'),
+            category_order=category_order # Add the custom order annotation
+        ).values(
+            'product_code', 'product_name', 'packing', 'category_order'
+        ).annotate(
+            total_carton_quantity=Sum('carton_quantity'),
+            total_pack_quantity=Sum('pack_quantity')
+        ).order_by('category_order', 'product_name') # Order by category, then by name
+
+
+class StockInReportView(generics.ListAPIView):
+    """
+    API view for the stock in report.
+    """
+    serializer_class = StockReportSerializer
+    filterset_class = StockInReportFilter
+    pagination_class = OptionalPagination
+
+    def get_queryset(self):
+        """
+        Aggregates the stock in data, excluding items from deleted SPG documents,
+        and applies a custom sort order.
+        """
+        category_order = Case(
+            When(product__category__name='ROMAN CANDLE', then=Value(1)),
+            When(product__category__name='SMALL ITEMS', then=Value(2)),
+            When(product__category__name='CAKE', then=Value(3)),
+            When(product__category__name='BAWANG', then=Value(4)),
+            When(product__category__name='KAWAT', then=Value(5)),
+            When(product__category__name='CAKE DISPLAY', then=Value(6)),
+            When(product__category__name='SINGLE ROW', then=Value(7)),
+            When(product__category__name='SINGLE SHOT', then=Value(8)),
+            When(product__category__name='DAY FIREWORKS CAKE', then=Value(9)),
+            When(product__category__name='DAY FIREWORKS SHELL', then=Value(10)),
+            When(product__category__name='DISPLAY SHELL', then=Value(11)),
+            When(product__category__name='LAIN LAIN', then=Value(12)),
+            default=Value(13), # Changed to 13 to avoid conflicts
+            output_field=IntegerField(),
+        )
+
+        return SPGItems.objects.filter(spk__is_deleted=False).annotate(
+            product_code=F('product__code'),
+            product_name=F('product__name'),
+            packing=F('product__packing'),
+            category_order=category_order # Add the custom order annotation
+        ).values(
+            'product_code', 'product_name', 'packing', 'category_order'
+        ).annotate(
+            total_carton_quantity=Sum('carton_quantity'),
+            total_pack_quantity=Sum('pack_quantity')
+        ).order_by('category_order', 'product_name')

@@ -3,7 +3,7 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 import datetime
-from .models import SuratTransferStokItems, SuratLainItems, SPG, SPK, SJ, SuratTransferStok, SuratLain, Stock
+from .models import SuratTransferStokItems, SuratLainItems, SPG, SPK, SJ, SuratTransferStok, SuratLain, Stock, SJItems, SPGItems
 
 
 class AwareDateTimeFilter(django_filters.DateTimeFilter):
@@ -196,3 +196,61 @@ class SuratLainFilter(django_filters.FilterSet):
     class Meta:
         model = SuratLain
         fields = ['start_date', 'end_date', 'warehouse', 'document_number']
+
+
+class StockOutReportFilter(django_filters.FilterSet):
+    """
+    FilterSet for the Stock Out report.
+    """
+    start_date = AwareDateTimeFilter(
+        field_name='sj__transaction_date',
+        lookup_expr='gte'
+    )
+    end_date = AwareDateTimeFilter(
+        field_name='sj__transaction_date',
+        lookup_expr='lte',
+        adjust_for_end_date=True
+    )
+    warehouse = django_filters.NumberFilter(field_name='sj__warehouse__id')
+    supplier = django_filters.NumberFilter(field_name='product__supplier__id')
+
+    # Change customer to a CharFilter and link it to a custom method
+    customer = django_filters.CharFilter(
+        method='filter_by_customer',
+        label="Filter by Customer ID or Non-Customer Name"
+    )
+
+    class Meta:
+        model = SJItems
+        fields = ['start_date', 'end_date', 'warehouse', 'supplier', 'customer']
+
+    def filter_by_customer(self, queryset, name, value):
+        """
+        Custom filter method that filters by customer ID if the value is numeric,
+        or by non-customer name if it is a string.
+        """
+        if value.isdigit():
+            return queryset.filter(sj__customer__id=value)
+        else:
+            return queryset.filter(sj__non_customer_name__icontains=value)
+
+
+class StockInReportFilter(django_filters.FilterSet):
+    """
+    FilterSet for the Stock In report.
+    """
+    start_date = AwareDateTimeFilter(
+        field_name='spg__transaction_date',
+        lookup_expr='gte'
+    )
+    end_date = AwareDateTimeFilter(
+        field_name='spg__transaction_date',
+        lookup_expr='lte',
+        adjust_for_end_date=True
+    )
+    warehouse = django_filters.NumberFilter(field_name='spg__warehouse__id')
+    supplier = django_filters.NumberFilter(field_name='product__supplier__id')
+
+    class Meta:
+        model = SPGItems
+        fields = ['start_date', 'end_date', 'warehouse', 'supplier']

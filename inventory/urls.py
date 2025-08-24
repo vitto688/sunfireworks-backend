@@ -19,6 +19,8 @@ from .views import (
     PenerimaanBarangReportView,
     PengeluaranBarangReportView,
     StockAdjustmentViewSet,
+    StockInReportView,
+    StockOutReportView,
 )
 
 router = DefaultRouter()
@@ -74,4 +76,6 @@ urlpatterns = [
     path('report/retur-penjualan/', ReturPenjualanReportView.as_view(), name='report-retur-penjualan'),
     path('report/penerimaan-barang/', PenerimaanBarangReportView.as_view(), name='report-penerimaan-.barang'),
     path('report/pengeluaran-barang/', PengeluaranBarangReportView.as_view(), name='report-pengeluaran-barang'),
+    path('report/stock-out/', StockOutReportView.as_view(), name='report-stock-out'),
+    path('report/stock-in/', StockInReportView.as_view(), name='report-stock-in'),
 ]

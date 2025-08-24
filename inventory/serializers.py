@@ -1104,3 +1104,14 @@ class StockAdjustmentSerializer(serializers.ModelSerializer):
                 stock.save()
 
         return adjustment
+
+
+class StockReportSerializer(serializers.Serializer):
+    """
+    Serializer for stock in/out reports.
+    """
+    product_code = serializers.CharField()
+    product_name = serializers.CharField()
+    packing = serializers.CharField()
+    total_carton_quantity = serializers.IntegerField()
+    total_pack_quantity = serializers.IntegerField()
