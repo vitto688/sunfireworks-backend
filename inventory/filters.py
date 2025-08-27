@@ -213,6 +213,7 @@ class StockOutReportFilter(django_filters.FilterSet):
     )
     warehouse = django_filters.NumberFilter(field_name='sj__warehouse__id')
     supplier = django_filters.NumberFilter(field_name='product__supplier__id')
+    product = django_filters.NumberFilter(field_name='product__id')
 
     # Change customer to a CharFilter and link it to a custom method
     customer = django_filters.CharFilter(
@@ -222,7 +223,7 @@ class StockOutReportFilter(django_filters.FilterSet):
 
     class Meta:
         model = SJItems
-        fields = ['start_date', 'end_date', 'warehouse', 'supplier', 'customer']
+        fields = ['start_date', 'end_date', 'warehouse', 'supplier', 'product', 'customer']
 
     def filter_by_customer(self, queryset, name, value):
         """
@@ -250,7 +251,8 @@ class StockInReportFilter(django_filters.FilterSet):
     )
     warehouse = django_filters.NumberFilter(field_name='spg__warehouse__id')
     supplier = django_filters.NumberFilter(field_name='product__supplier__id')
+    product = django_filters.NumberFilter(field_name='product__id')
 
     class Meta:
         model = SPGItems
-        fields = ['start_date', 'end_date', 'warehouse', 'supplier']
+        fields = ['start_date', 'end_date', 'warehouse', 'supplier', 'product']
