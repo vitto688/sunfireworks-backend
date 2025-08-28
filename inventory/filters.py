@@ -167,9 +167,24 @@ class SJFilter(django_filters.FilterSet):
     warehouse = django_filters.NumberFilter(field_name='warehouse__id')
     document_number = django_filters.CharFilter(field_name='document_number', lookup_expr='icontains')
 
+    customer = django_filters.CharFilter(
+        method='filter_by_customer_or_non_customer',
+        label="Filter by Customer ID or Non-Customer Name"
+    )
+
     class Meta:
         model = SJ
-        fields = ['start_date', 'end_date', 'warehouse', 'document_number']
+        fields = ['start_date', 'end_date', 'warehouse', 'document_number', 'customer']
+
+    def filter_by_customer_or_non_customer(self, queryset, name, value):
+        """
+        Custom filter method that filters SJ documents by customer ID if the value is numeric,
+        or by non_customer_name if it is a string.
+        """
+        if value.isdigit():
+            return queryset.filter(customer__id=value)
+        else:
+            return queryset.filter(non_customer_name__icontains=value)
 
 
 class SuratTransferStokFilter(django_filters.FilterSet):
