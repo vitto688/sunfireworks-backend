@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Case, When, Value, IntegerField, Q, Sum, F
+from django.db.models.functions import Lower
 from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems, StockAdjustment, SJItems, SPGItems
 from .serializers import (
     CategorySerializer,
@@ -189,7 +190,7 @@ class StockViewSet(
 
         queryset = Stock.objects.filter(product__is_deleted=False).annotate(
             category_order=category_order
-        ).order_by('category_order', 'product__name')
+        ).order_by('category_order', Lower('product__name'))
 
         return queryset
 
@@ -603,7 +604,7 @@ class StockInfoReportView(generics.ListAPIView):
 
         queryset = Stock.objects.filter(product__is_deleted=False).annotate(
             category_order=category_order
-        ).order_by('category_order', 'product__name')
+        ).order_by('category_order', Lower('product__name'))
 
         return queryset
 
@@ -747,7 +748,7 @@ class StockOutReportView(generics.ListAPIView):
         ).annotate(
             total_carton_quantity=Sum('carton_quantity'),
             total_pack_quantity=Sum('pack_quantity')
-        ).order_by('category_order', 'product_name') # Order by category, then by name
+        ).order_by('category_order', Lower('product__name'))
 
 
 class StockInReportView(generics.ListAPIView):
@@ -790,4 +791,4 @@ class StockInReportView(generics.ListAPIView):
         ).annotate(
             total_carton_quantity=Sum('carton_quantity'),
             total_pack_quantity=Sum('pack_quantity')
-        ).order_by('category_order', 'product_name')
+        ).order_by('category_order', Lower('product__name'))
