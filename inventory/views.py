@@ -602,7 +602,11 @@ class StockInfoReportView(generics.ListAPIView):
             output_field=IntegerField(),
         )
 
-        queryset = Stock.objects.filter(product__is_deleted=False).annotate(
+        queryset = Stock.objects.filter(
+            product__is_deleted=False
+        ).filter(
+            Q(carton_quantity__gt=0) | Q(pack_quantity__gt=0)
+        ).annotate(
             category_order=category_order
         ).order_by('category_order', Lower('product__name'))
 
