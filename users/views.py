@@ -57,11 +57,11 @@ class UserViewSet(viewsets.ModelViewSet):
         view_type = self.request.query_params.get('view', 'active')
 
         if view_type == 'all':
-            return User.objects.all()
+            return User.objects.select_related('role')
         elif view_type == 'deleted':
-            return User.objects.filter(is_deleted=True)
+            return User.objects.filter(is_deleted=True).select_related('role')
         else:
-            return User.objects.filter(is_deleted=False)
+            return User.objects.filter(is_deleted=False).select_related('role')
 
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()

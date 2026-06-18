@@ -6,10 +6,42 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.db.models import F
 
-class Category(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+
+class DocumentSequence(models.Model):
+    family = models.CharField(max_length=50)
+    period_key = models.CharField(max_length=20)
+    current_value = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['family', 'period_key'],
+                name='unique_document_sequence_family_period',
+            )
+        ]
+
+
+def _next_document_sequence(family, period_key):
+    with transaction.atomic():
+        sequence, created = DocumentSequence.objects.select_for_update().get_or_create(
+            family=family,
+            period_key=period_key,
+            defaults={'current_value': 0},
+        )
+        sequence.current_value += 1
+        sequence.save(update_fields=['current_value', 'updated_at'])
+        return sequence.current_value
+
+class Category(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    sort_order = models.PositiveIntegerField(default=99, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
 
     def __str__(self):
         return self.name
@@ -176,32 +208,12 @@ class SPG(models.Model):
         if not self.document_number:
             now = timezone.now()
             doc_type = self.document_type
-            sequence = 1
 
             if doc_type == 'IMPORT':
-                last_spg = SPG.objects.filter(
-                    document_type=doc_type,
-                    created_at__year=now.year
-                ).order_by('document_number').last()
-
-                if last_spg:
-                    # Extract number from 'YY-XXX/KA'
-                    last_seq = int(last_spg.document_number.split('/')[0].split('-')[1])
-                    sequence = last_seq + 1
-
+                sequence = _next_document_sequence('SPG:IMPORT', str(now.year))
                 self.document_number = f"{now.strftime('%y')}-{sequence:03d}/KA"
 
             else:
-                last_spg = SPG.objects.filter(
-                    document_type=doc_type,
-                    created_at__year=now.year,
-                    created_at__month=now.month
-                ).order_by('document_number').last()
-
-                if last_spg:
-                    last_seq = int(last_spg.document_number.split('/')[-1])
-                    sequence = last_seq +  1
-
                 prefix = ""
                 if doc_type == 'BAWANG':
                     prefix = f"{now.strftime('%Y-%m')}/SPG-B"
@@ -210,6 +222,7 @@ class SPG(models.Model):
                 elif doc_type == 'LAIN-LAIN':
                     prefix = f"{now.strftime('%Y-%m')}/SPG"
 
+                sequence = _next_document_sequence(f'SPG:{doc_type}', now.strftime('%Y-%m'))
                 self.document_number = f"{prefix}/{sequence:03d}"
 
         super().save(*args, **kwargs)
@@ -249,16 +262,7 @@ class SPK(models.Model):
     def save(self, *args, **kwargs):
         if not self.document_number:
             now = timezone.now()
-            last_spk = SPK.objects.filter(
-                created_at__year=now.year,
-                created_at__month=now.month
-            ).order_by('document_number').last()
-
-            sequence = 1
-            if last_spk:
-                last_seq = int(last_spk.document_number.split('/')[-1])
-                sequence = last_seq + 1
-
+            sequence = _next_document_sequence('SPK', now.strftime('%Y-%m'))
             self.document_number = f"{now.strftime('%Y-%m')}/SPK/{sequence:03d}"
 
         super().save(*args, **kwargs)
@@ -329,15 +333,7 @@ class SJ(models.Model):
             now = timezone.now()
             year = now.strftime('%Y')
             month_year = now.strftime('%m%Y')
-
-            # Find the highest sequence number used in the current year.
-            last_doc = SJ.objects.filter(created_at__year=now.year).order_by('-sequence_number').first()
-
-            new_sequence = 1
-            if last_doc and last_doc.sequence_number is not None:
-                new_sequence = last_doc.sequence_number + 1
-
-            self.sequence_number = new_sequence
+            self.sequence_number = _next_document_sequence('SJ', str(now.year))
             sequence_str = f"{self.sequence_number:03d}"
 
             if self.sj_type in ['KA', 'KA-SJ']:
@@ -426,18 +422,6 @@ class SuratLain(models.Model):
         if not self.document_number:
             now = timezone.now()
             year_month = now.strftime('%Y-%m')
-
-            last_doc = SuratLain.objects.filter(
-                document_type=self.document_type,
-                created_at__year=now.year,
-                created_at__month=now.month
-            ).order_by('document_number').last()
-
-            sequence = 1
-            if last_doc:
-                last_seq = int(last_doc.document_number.split('/')[-1])
-                sequence = last_seq + 1
-
             doc_prefix_map = {
                 'STB': 'STB',
                 'SPB': 'SPB',
@@ -445,6 +429,7 @@ class SuratLain(models.Model):
                 'RETUR_PENJUALAN': 'RPJ',
             }
             prefix = doc_prefix_map.get(self.document_type, 'SL')
+            sequence = _next_document_sequence(f'SURAT_LAIN:{self.document_type}', year_month)
             self.document_number = f"{year_month}/{prefix}/{sequence:03d}"
 
         super().save(*args, **kwargs)
@@ -571,16 +556,7 @@ class SuratTransferStok(models.Model):
     def save(self, *args, **kwargs):
         if not self.document_number:
             now = timezone.now()
-            last_transfer = SuratTransferStok.objects.filter(
-                created_at__year=now.year,
-                created_at__month=now.month
-            ).order_by('document_number').last()
-
-            sequence = 1
-            if last_transfer:
-                last_seq = int(last_transfer.document_number.split('/')[-1])
-                sequence = last_seq + 1
-
+            sequence = _next_document_sequence('SURAT_TRANSFER_STOK', now.strftime('%Y-%m'))
             self.document_number = f"{now.strftime('%Y')}/TRS/{sequence:03d}"
 
         super().save(*args, **kwargs)
@@ -683,16 +659,7 @@ class StockAdjustment(models.Model):
     def save(self, *args, **kwargs):
         if not self.document_number:
             now = timezone.now()
-            last_adj = StockAdjustment.objects.filter(
-                created_at__year=now.year,
-                created_at__month=now.month
-            ).order_by('document_number').last()
-
-            sequence = 1
-            if last_adj:
-                last_seq = int(last_adj.document_number.split('/')[-1])
-                sequence = last_seq + 1
-
+            sequence = _next_document_sequence('STOCK_ADJUSTMENT', now.strftime('%Y-%m'))
             self.document_number = f"{now.strftime('%Y-%m')}/SA/{sequence:03d}"
 
         super().save(*args, **kwargs)

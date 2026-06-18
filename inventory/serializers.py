@@ -7,6 +7,64 @@ from django.utils import timezone
 import datetime
 
 
+def _build_stock_map(warehouse, product_ids):
+    stocks = Stock.objects.filter(
+        warehouse=warehouse,
+        product_id__in=product_ids,
+    )
+    return {
+        stock.product_id: stock
+        for stock in stocks
+    }
+
+
+def _build_spk_fulfillment_map(spk, product_ids, exclude_sj_id=None):
+    queryset = SJItems.objects.filter(
+        sj__spk=spk,
+        product_id__in=product_ids,
+        sj__is_deleted=False,
+    )
+    if exclude_sj_id is not None:
+        queryset = queryset.exclude(sj_id=exclude_sj_id)
+
+    rows = queryset.values('product_id').annotate(
+        carton_total=Coalesce(Sum('carton_quantity'), 0),
+        pack_total=Coalesce(Sum('pack_quantity'), 0),
+    )
+    return {
+        row['product_id']: row
+        for row in rows
+    }
+
+
+def _build_spk_item_map(spk, product_ids):
+    items = SPKItems.objects.filter(
+        spk=spk,
+        product_id__in=product_ids,
+    )
+    return {
+        item.product_id: item
+        for item in items
+    }
+
+
+def _apply_stock_deltas(deltas):
+    for (product_id, warehouse_id), delta in deltas.items():
+        Stock.objects.filter(product_id=product_id, warehouse_id=warehouse_id).update(
+            carton_quantity=F('carton_quantity') + delta['carton_quantity'],
+            pack_quantity=F('pack_quantity') + delta['pack_quantity'],
+        )
+
+
+def _merge_stock_delta(deltas, product_id, warehouse_id, carton_quantity, pack_quantity):
+    key = (product_id, warehouse_id)
+    if key not in deltas:
+        deltas[key] = {'carton_quantity': 0, 'pack_quantity': 0}
+
+    deltas[key]['carton_quantity'] += carton_quantity
+    deltas[key]['pack_quantity'] += pack_quantity
+
+
 class FlexDateTimeField(serializers.DateTimeField):
     """
     A custom DateTimeField that can accept a date-only string (YYYY-MM-DD)
@@ -142,7 +200,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         }
 
         # Get and update stock quantities where they exist
-        stocks = Stock.objects.filter(product=obj)
+        stocks = Stock.objects.filter(product=obj).select_related('warehouse')
         for stock in stocks:
             warehouse_name = stock.warehouse.name
             stock_data[warehouse_name]['pack'] = stock.pack_quantity
@@ -302,28 +360,31 @@ class SPGSerializer(serializers.ModelSerializer):
             items_data = validated_data.pop('items')
             with transaction.atomic():
                 spg = SPG.objects.create(**validated_data)
+                stock_deltas = {}
                 for item_data in items_data:
                     SPGItems.objects.create(spg=spg, **item_data)
-                    Stock.objects.filter(
-                        product=item_data['product'],
-                        warehouse=spg.warehouse
-                    ).update(
-                        carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
-                        pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                    _merge_stock_delta(
+                        stock_deltas,
+                        item_data['product'].id,
+                        spg.warehouse_id,
+                        item_data.get('carton_quantity', 0),
+                        item_data.get('pack_quantity', 0),
                     )
+                _apply_stock_deltas(stock_deltas)
             return spg
 
     def update(self, instance, validated_data):
             items_data = validated_data.pop('items')
 
             with transaction.atomic():
+                stock_deltas = {}
                 for item in instance.items.all():
-                    Stock.objects.filter(
-                        product=item.product,
-                        warehouse=instance.warehouse
-                    ).update(
-                        carton_quantity=F('carton_quantity') - item.carton_quantity,
-                        pack_quantity=F('pack_quantity') - item.pack_quantity
+                    _merge_stock_delta(
+                        stock_deltas,
+                        item.product_id,
+                        instance.warehouse_id,
+                        -item.carton_quantity,
+                        -item.pack_quantity,
                     )
 
                 instance.document_number = validated_data.get('document_number', instance.document_number)
@@ -338,13 +399,15 @@ class SPGSerializer(serializers.ModelSerializer):
                 instance.items.all().delete()
                 for item_data in items_data:
                     SPGItems.objects.create(spg=instance, **item_data)
-                    Stock.objects.filter(
-                        product=item_data['product'],
-                        warehouse=instance.warehouse
-                    ).update(
-                        carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
-                        pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                    _merge_stock_delta(
+                        stock_deltas,
+                        item_data['product'].id,
+                        instance.warehouse_id,
+                        item_data.get('carton_quantity', 0),
+                        item_data.get('pack_quantity', 0),
                     )
+
+                _apply_stock_deltas(stock_deltas)
 
             return instance
 
@@ -392,38 +455,42 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
         source_warehouse = data.get('source_warehouse')
         destination_warehouse = data.get('destination_warehouse')
         items = data.get('items')
+        original_item_map = {}
 
         # Rule: Source and destination cannot be the same
         if source_warehouse == destination_warehouse:
             raise serializers.ValidationError("Source and destination warehouses cannot be the same.")
 
+        product_ids = [item_data['product'].id for item_data in items]
+        stock_map = _build_stock_map(source_warehouse, product_ids)
+
         # For updates, the instance is available in the context
         is_update = self.instance is not None
+        if is_update:
+            original_item_map = {
+                item.product_id: item
+                for item in self.instance.items.all()
+            }
 
         for item_data in items:
             product = item_data['product']
+            stock_at_source = stock_map.get(product.id)
 
-            try:
-                stock_at_source = Stock.objects.get(product=product, warehouse=source_warehouse)
-
-                # On update, we can "use" the stock from the original transfer
-                # before checking if the new amount is available.
-                original_carton_qty = 0
-                original_pack_qty = 0
-                if is_update and self.instance.source_warehouse == source_warehouse:
-                    original_item = self.instance.items.filter(product=product).first()
-                    if original_item:
-                        original_carton_qty = original_item.carton_quantity
-                        original_pack_qty = original_item.pack_quantity
-
-                # Check if available stock is sufficient for the new transfer amount
-                if (stock_at_source.carton_quantity + original_carton_qty) < item_data.get('carton_quantity', 0):
-                    raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {source_warehouse.name}.")
-                if (stock_at_source.pack_quantity + original_pack_qty) < item_data.get('pack_quantity', 0):
-                     raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {source_warehouse.name}.")
-
-            except Stock.DoesNotExist:
+            if stock_at_source is None:
                 raise serializers.ValidationError(f"Stock record for {product.name} at {source_warehouse.name} not found.")
+
+            original_carton_qty = 0
+            original_pack_qty = 0
+            if is_update and self.instance.source_warehouse == source_warehouse:
+                original_item = original_item_map.get(product.id)
+                if original_item:
+                    original_carton_qty = original_item.carton_quantity
+                    original_pack_qty = original_item.pack_quantity
+
+            if (stock_at_source.carton_quantity + original_carton_qty) < item_data.get('carton_quantity', 0):
+                raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {source_warehouse.name}.")
+            if (stock_at_source.pack_quantity + original_pack_qty) < item_data.get('pack_quantity', 0):
+                raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {source_warehouse.name}.")
 
         return data
 
@@ -431,18 +498,24 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop('items')
         with transaction.atomic():
             transfer = SuratTransferStok.objects.create(**validated_data)
+            stock_deltas = {}
             for item_data in items_data:
                 SuratTransferStokItems.objects.create(surat_transfer_stok=transfer, **item_data)
-                # Subtract from source
-                Stock.objects.filter(product=item_data['product'], warehouse=transfer.source_warehouse).update(
-                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
-                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    transfer.source_warehouse_id,
+                    -item_data.get('carton_quantity', 0),
+                    -item_data.get('pack_quantity', 0),
                 )
-                # Add to destination
-                Stock.objects.filter(product=item_data['product'], warehouse=transfer.destination_warehouse).update(
-                    carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
-                    pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    transfer.destination_warehouse_id,
+                    item_data.get('carton_quantity', 0),
+                    item_data.get('pack_quantity', 0),
                 )
+            _apply_stock_deltas(stock_deltas)
         return transfer
 
     def update(self, instance, validated_data):
@@ -451,29 +524,40 @@ class SuratTransferStokSerializer(serializers.ModelSerializer):
         new_destination_warehouse = validated_data.get('destination_warehouse', instance.destination_warehouse)
 
         with transaction.atomic():
+            stock_deltas = {}
             for item in instance.items.all():
-                # Add back to original source
-                Stock.objects.filter(product=item.product, warehouse=instance.source_warehouse).update(
-                    carton_quantity=F('carton_quantity') + item.carton_quantity,
-                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                _merge_stock_delta(
+                    stock_deltas,
+                    item.product_id,
+                    instance.source_warehouse_id,
+                    item.carton_quantity,
+                    item.pack_quantity,
                 )
-                # Remove from original destination
-                Stock.objects.filter(product=item.product, warehouse=instance.destination_warehouse).update(
-                    carton_quantity=F('carton_quantity') - item.carton_quantity,
-                    pack_quantity=F('pack_quantity') - item.pack_quantity
+                _merge_stock_delta(
+                    stock_deltas,
+                    item.product_id,
+                    instance.destination_warehouse_id,
+                    -item.carton_quantity,
+                    -item.pack_quantity,
                 )
 
             for item_data in items_data:
-                # Subtract from new source
-                Stock.objects.filter(product=item_data['product'], warehouse=new_source_warehouse).update(
-                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
-                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    new_source_warehouse.id,
+                    -item_data.get('carton_quantity', 0),
+                    -item_data.get('pack_quantity', 0),
                 )
-                # Add to new destination
-                Stock.objects.filter(product=item_data['product'], warehouse=new_destination_warehouse).update(
-                    carton_quantity=F('carton_quantity') + item_data.get('carton_quantity', 0),
-                    pack_quantity=F('pack_quantity') + item_data.get('pack_quantity', 0)
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    new_destination_warehouse.id,
+                    item_data.get('carton_quantity', 0),
+                    item_data.get('pack_quantity', 0),
                 )
+
+            _apply_stock_deltas(stock_deltas)
 
             instance.source_warehouse = new_source_warehouse
             instance.destination_warehouse = new_destination_warehouse
@@ -507,36 +591,38 @@ class SPKItemsSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'product_name', 'product_code']
 
+    def _get_fulfilled_totals(self, obj):
+        cache = getattr(self, '_fulfilled_totals_cache', None)
+        if cache is None:
+            cache = {}
+            self._fulfilled_totals_cache = cache
+
+        if obj.pk not in cache:
+            cache[obj.pk] = SJItems.objects.filter(
+                sj__spk=obj.spk,
+                product=obj.product,
+                sj__is_deleted=False
+            ).aggregate(
+                carton_total=Coalesce(Sum('carton_quantity'), 0),
+                pack_total=Coalesce(Sum('pack_quantity'), 0),
+            )
+
+        return cache[obj.pk]
+
     def get_unfulfilled_carton_quantity(self, obj):
         """
         Calculates the remaining carton quantity by subtracting all fulfilled SJ items.
         'obj' here is an instance of SPKItems.
         """
-        # The annotation is now performed here, per item.
-        # It sums the carton_quantity of all SJItems that reference this SPK item's parent SPK and product.
-        fulfilled_cartons = SJItems.objects.filter(
-            sj__spk=obj.spk,
-            product=obj.product,
-            sj__is_deleted=False
-        ).aggregate(
-            total=Coalesce(Sum('carton_quantity'), 0)
-        )['total']
-
-        return obj.carton_quantity - fulfilled_cartons
+        totals = self._get_fulfilled_totals(obj)
+        return obj.carton_quantity - totals['carton_total']
 
     def get_unfulfilled_pack_quantity(self, obj):
         """
         Calculates the remaining pack quantity by subtracting all fulfilled SJ items.
         """
-        fulfilled_packs = SJItems.objects.filter(
-            sj__spk=obj.spk,
-            product=obj.product,
-            sj__is_deleted=False
-        ).aggregate(
-            total=Coalesce(Sum('pack_quantity'), 0)
-        )['total']
-
-        return obj.pack_quantity - fulfilled_packs
+        totals = self._get_fulfilled_totals(obj)
+        return obj.pack_quantity - totals['pack_total']
 
 
 class SPKSerializer(serializers.ModelSerializer):
@@ -663,34 +749,35 @@ class SJSerializer(serializers.ModelSerializer):
         if not spk:
             raise serializers.ValidationError({"spk": "An SPK must be specified."})
 
+        product_ids = [item_data['product'].id for item_data in items_data]
+        spk_item_map = _build_spk_item_map(spk, product_ids)
+        fulfilled_map = _build_spk_fulfillment_map(
+            spk,
+            product_ids,
+            exclude_sj_id=self.instance.pk if self.instance else None,
+        )
+        original_item_map = {}
+        if self.instance:
+            original_item_map = {
+                item.product_id: item
+                for item in self.instance.items.all()
+            }
+
         for item_data in items_data:
             product = item_data['product']
 
             # --- Validation 1: Check if the product is in the original SPK ---
-            try:
-                spk_item = SPKItems.objects.get(spk=spk, product=product)
-            except SPKItems.DoesNotExist:
+            spk_item = spk_item_map.get(product.id)
+            if spk_item is None:
                 raise serializers.ValidationError({
                     f"product_{product.id}": f"Product '{product.name}' is not listed in the original SPK ({spk.document_number})."
                 })
 
             # --- Validation 2: Check if the quantity exceeds the unfulfilled amount ---
-            # Calculate total quantity already fulfilled for this product on other SJs for this SPK.
-            # We must exclude the current SJ instance if we are performing an update.
-            existing_sjs_for_spk = SJ.objects.filter(spk=spk, is_deleted=False)
-            if self.instance:
-                existing_sjs_for_spk = existing_sjs_for_spk.exclude(pk=self.instance.pk)
+            fulfilled_totals = fulfilled_map.get(product.id, {'carton_total': 0, 'pack_total': 0})
 
-            fulfilled_cartons = existing_sjs_for_spk.filter(items__product=product).aggregate(
-                total=Coalesce(Sum('items__carton_quantity'), 0)
-            )['total']
-
-            fulfilled_packs = existing_sjs_for_spk.filter(items__product=product).aggregate(
-                total=Coalesce(Sum('items__pack_quantity'), 0)
-            )['total']
-
-            unfulfilled_cartons = spk_item.carton_quantity - fulfilled_cartons
-            unfulfilled_packs = spk_item.pack_quantity - fulfilled_packs
+            unfulfilled_cartons = spk_item.carton_quantity - fulfilled_totals['carton_total']
+            unfulfilled_packs = spk_item.pack_quantity - fulfilled_totals['pack_total']
 
             if item_data.get('carton_quantity', 0) > unfulfilled_cartons:
                 raise serializers.ValidationError({
@@ -706,27 +793,33 @@ class SJSerializer(serializers.ModelSerializer):
         warehouse = data.get('warehouse') or (self.instance and self.instance.warehouse)
         items_data = data.get('items', [])
         is_update = self.instance is not None
+        product_ids = [item_data['product'].id for item_data in items_data]
+        stock_map = _build_stock_map(warehouse, product_ids)
+        original_item_map = {}
+        if is_update:
+            original_item_map = {
+                item.product_id: item
+                for item in self.instance.items.all()
+            }
 
         for item_data in items_data:
             product = item_data['product']
-            try:
-                stock = Stock.objects.get(product=product, warehouse=warehouse)
-
-                original_carton = 0
-                original_pack = 0
-                if is_update:
-                    original_item = self.instance.items.filter(product=product).first()
-                    if original_item:
-                        original_carton = original_item.carton_quantity
-                        original_pack = original_item.pack_quantity
-
-                if (stock.carton_quantity + original_carton) < item_data.get('carton_quantity', 0):
-                    raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {warehouse.name}.")
-                if (stock.pack_quantity + original_pack) < item_data.get('pack_quantity', 0):
-                    raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {warehouse.name}.")
-
-            except Stock.DoesNotExist:
+            stock = stock_map.get(product.id)
+            if stock is None:
                 raise serializers.ValidationError(f"Stock record for {product.name} at {warehouse.name} not found.")
+
+            original_carton = 0
+            original_pack = 0
+            if is_update:
+                original_item = original_item_map.get(product.id)
+                if original_item:
+                    original_carton = original_item.carton_quantity
+                    original_pack = original_item.pack_quantity
+
+            if (stock.carton_quantity + original_carton) < item_data.get('carton_quantity', 0):
+                raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {warehouse.name}.")
+            if (stock.pack_quantity + original_pack) < item_data.get('pack_quantity', 0):
+                raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {warehouse.name}.")
 
         return data
 
@@ -734,12 +827,17 @@ class SJSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop('items')
         with transaction.atomic():
             sj = SJ.objects.create(**validated_data)
+            stock_deltas = {}
             for item_data in items_data:
                 SJItems.objects.create(sj=sj, **item_data)
-                Stock.objects.filter(product=item_data['product'], warehouse=sj.warehouse).update(
-                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
-                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    sj.warehouse_id,
+                    -item_data.get('carton_quantity', 0),
+                    -item_data.get('pack_quantity', 0),
                 )
+            _apply_stock_deltas(stock_deltas)
         return sj
 
     def update(self, instance, validated_data):
@@ -748,26 +846,27 @@ class SJSerializer(serializers.ModelSerializer):
         new_warehouse = validated_data.get('warehouse', instance.warehouse)
 
         with transaction.atomic():
+            stock_deltas = {}
             # --- Step 1: Revert the old stock from the OLD warehouse ---
             # This is critical. It adds the quantities back to the original source warehouse.
             for item in instance.items.all():
-                Stock.objects.filter(
-                    product=item.product,
-                    warehouse=instance.warehouse  # Use the ORIGINAL warehouse here
-                ).update(
-                    carton_quantity=F('carton_quantity') + item.carton_quantity,
-                    pack_quantity=F('pack_quantity') + item.pack_quantity
+                _merge_stock_delta(
+                    stock_deltas,
+                    item.product_id,
+                    instance.warehouse_id,  # Use the ORIGINAL warehouse here
+                    item.carton_quantity,
+                    item.pack_quantity,
                 )
 
             # --- Step 2: Apply the new stock to the NEW warehouse ---
             # This subtracts the new quantities from the potentially new warehouse.
             for item_data in items_data:
-                 Stock.objects.filter(
-                    product=item_data['product'],
-                    warehouse=new_warehouse  # Use the NEW warehouse here
-                ).update(
-                    carton_quantity=F('carton_quantity') - item_data.get('carton_quantity', 0),
-                    pack_quantity=F('pack_quantity') - item_data.get('pack_quantity', 0)
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    new_warehouse.id,  # Use the NEW warehouse here
+                    -item_data.get('carton_quantity', 0),
+                    -item_data.get('pack_quantity', 0),
                 )
 
             # --- Step 3: Update the SJ instance itself and its items ---
@@ -779,6 +878,8 @@ class SJSerializer(serializers.ModelSerializer):
             instance.items.all().delete()
             for item_data in items_data:
                 SJItems.objects.create(sj=instance, **item_data)
+
+            _apply_stock_deltas(stock_deltas)
 
         return instance
 
@@ -827,31 +928,37 @@ class SuratLainSerializer(serializers.ModelSerializer):
             # Get the warehouse from the incoming data, or from the existing instance on updates.
             warehouse = data.get('warehouse') or (self.instance and self.instance.warehouse)
             items_data = data.get('items', [])
+            product_ids = [item_data['product'].id for item_data in items_data]
+            stock_map = _build_stock_map(warehouse, product_ids)
             is_update = self.instance is not None
+            original_item_map = {}
+            if is_update:
+                original_item_map = {
+                    item.product_id: item
+                    for item in self.instance.items.all()
+                }
 
             for item_data in items_data:
                 product = item_data['product']
-                try:
-                    stock = Stock.objects.get(product=product, warehouse=warehouse)
-
-                    # On update, we can "use" the stock from the original document
-                    # before checking if the new amount is available.
-                    original_carton = 0
-                    original_pack = 0
-                    if is_update:
-                        original_item = self.instance.items.filter(product=product).first()
-                        if original_item:
-                            original_carton = original_item.carton_quantity
-                            original_pack = original_item.pack_quantity
-
-                    # Check if available stock is sufficient for the new outgoing amount
-                    if (stock.carton_quantity + original_carton) < item_data.get('carton_quantity', 0):
-                        raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {warehouse.name}.")
-                    if (stock.pack_quantity + original_pack) < item_data.get('pack_quantity', 0):
-                        raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {warehouse.name}.")
-
-                except Stock.DoesNotExist:
+                stock = stock_map.get(product.id)
+                if stock is None:
                     raise serializers.ValidationError(f"Stock record for {product.name} at {warehouse.name} not found.")
+
+                # On update, we can "use" the stock from the original document
+                # before checking if the new amount is available.
+                original_carton = 0
+                original_pack = 0
+                if is_update:
+                    original_item = original_item_map.get(product.id)
+                    if original_item:
+                        original_carton = original_item.carton_quantity
+                        original_pack = original_item.pack_quantity
+
+                # Check if available stock is sufficient for the new outgoing amount
+                if (stock.carton_quantity + original_carton) < item_data.get('carton_quantity', 0):
+                    raise serializers.ValidationError(f"Insufficient carton stock for {product.name} at {warehouse.name}.")
+                if (stock.pack_quantity + original_pack) < item_data.get('pack_quantity', 0):
+                    raise serializers.ValidationError(f"Insufficient pack stock for {product.name} at {warehouse.name}.")
 
         # If all validation passes, return the data.
         return data
@@ -862,20 +969,26 @@ class SuratLainSerializer(serializers.ModelSerializer):
 
         with transaction.atomic():
             surat = SuratLain.objects.create(document_type=doc_type, **validated_data)
+            stock_deltas = {}
             for item_data in items_data:
                 SuratLainItems.objects.create(surat_lain=surat, **item_data)
 
                 # Conditionally add or subtract stock
                 if doc_type in SuratLain.INCOMING_TYPES:
-                    op = F('carton_quantity') + item_data.get('carton_quantity', 0)
-                    pack_op = F('pack_quantity') + item_data.get('pack_quantity', 0)
+                    carton_delta = item_data.get('carton_quantity', 0)
+                    pack_delta = item_data.get('pack_quantity', 0)
                 else: # Outgoing
-                    op = F('carton_quantity') - item_data.get('carton_quantity', 0)
-                    pack_op = F('pack_quantity') - item_data.get('pack_quantity', 0)
+                    carton_delta = -item_data.get('carton_quantity', 0)
+                    pack_delta = -item_data.get('pack_quantity', 0)
 
-                Stock.objects.filter(product=item_data['product'], warehouse=surat.warehouse).update(
-                    carton_quantity=op, pack_quantity=pack_op
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    surat.warehouse_id,
+                    carton_delta,
+                    pack_delta,
                 )
+            _apply_stock_deltas(stock_deltas)
         return surat
 
     def update(self, instance, validated_data):
@@ -883,6 +996,7 @@ class SuratLainSerializer(serializers.ModelSerializer):
         new_warehouse = validated_data.get('warehouse', instance.warehouse)
 
         with transaction.atomic():
+            stock_deltas = {}
             # Revert old stock movements
             instance.soft_delete() # This flips is_deleted=True, so we must flip it back
             instance.is_deleted = False
@@ -894,14 +1008,18 @@ class SuratLainSerializer(serializers.ModelSerializer):
             # Apply new stock movements
             for item_data in items_data:
                 if instance.document_type in SuratLain.INCOMING_TYPES:
-                    op = F('carton_quantity') + item_data.get('carton_quantity', 0)
-                    pack_op = F('pack_quantity') + item_data.get('pack_quantity', 0)
+                    carton_delta = item_data.get('carton_quantity', 0)
+                    pack_delta = item_data.get('pack_quantity', 0)
                 else: # Outgoing
-                    op = F('carton_quantity') - item_data.get('carton_quantity', 0)
-                    pack_op = F('pack_quantity') - item_data.get('pack_quantity', 0)
+                    carton_delta = -item_data.get('carton_quantity', 0)
+                    pack_delta = -item_data.get('pack_quantity', 0)
 
-                Stock.objects.filter(product=item_data['product'], warehouse=new_warehouse).update(
-                    carton_quantity=op, pack_quantity=pack_op
+                _merge_stock_delta(
+                    stock_deltas,
+                    item_data['product'].id,
+                    new_warehouse.id,
+                    carton_delta,
+                    pack_delta,
                 )
 
             # Re-create items and save the instance's final state
@@ -909,6 +1027,7 @@ class SuratLainSerializer(serializers.ModelSerializer):
             for item_data in items_data:
                 SuratLainItems.objects.create(surat_lain=instance, **item_data)
             instance.save()
+            _apply_stock_deltas(stock_deltas)
 
         return instance
 

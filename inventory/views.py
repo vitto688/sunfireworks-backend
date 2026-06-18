@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Case, When, Value, IntegerField, Q, Sum, F
+from django.db.models import Q, Sum, F
 from django.db.models.functions import Lower
 from .models import Category, Supplier, Product, Warehouse, Stock, Customer, SPG, SuratTransferStok, SPK, SJ, SuratLain, SuratTransferStokItems, SuratLainItems, StockAdjustment, SJItems, SPGItems
 from .serializers import (
@@ -93,11 +93,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         view_type = self.request.query_params.get('view', 'active')
 
         if view_type == 'all':
-            return Product.objects.all()
+            return Product.objects.select_related('category', 'supplier')
         elif view_type == 'deleted':
-            return Product.objects.filter(is_deleted=True)
+            return Product.objects.filter(is_deleted=True).select_related('category', 'supplier')
         else:
-            return Product.objects.filter(is_deleted=False)
+            return Product.objects.filter(is_deleted=False).select_related('category', 'supplier')
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -167,31 +167,11 @@ class StockViewSet(
     filterset_class = StockFilter
 
     def get_queryset(self):
-        """
-        Overrides the default queryset to apply a custom sort order.
-        """
-        # --- Custom Sort Logic ---
-        category_order = Case(
-            When(product__category__name='ROMAN CANDLE', then=Value(1)),
-            When(product__category__name='SMALL ITEMS', then=Value(2)),
-            When(product__category__name='CAKE', then=Value(3)),
-            When(product__category__name='BAWANG', then=Value(4)),
-            When(product__category__name='KAWAT', then=Value(5)),
-            When(product__category__name='LOKAL', then=Value(6)),
-            When(product__category__name='CAKE DISPLAY', then=Value(7)),
-            When(product__category__name='SINGLE ROW', then=Value(8)),
-            When(product__category__name='SINGLE SHOT', then=Value(9)),
-            When(product__category__name='DAY FIREWORKS CAKE', then=Value(10)),
-            When(product__category__name='DAY FIREWORKS SHELL', then=Value(11)),
-            When(product__category__name='DISPLAY SHELL', then=Value(12)),
-            When(product__category__name='LAIN LAIN', then=Value(13)),
-            default=Value(14),
-            output_field=IntegerField(),
-        )
-
-        queryset = Stock.objects.filter(product__is_deleted=False).annotate(
-            category_order=category_order
-        ).order_by('category_order', Lower('product__name'))
+        queryset = Stock.objects.filter(product__is_deleted=False).select_related(
+            'product__category',
+            'product__supplier',
+            'warehouse',
+        ).order_by('product__category__sort_order', Lower('product__name'))
 
         return queryset
 
@@ -331,7 +311,10 @@ class SPGViewSet(viewsets.ModelViewSet):
         if document_type not in [choice[0] for choice in SPG.DOCUMENT_TYPE_CHOICES]:
             return SPG.objects.none()
 
-        queryset = SPG.objects.filter(document_type=document_type)
+        queryset = SPG.objects.filter(document_type=document_type).select_related('warehouse', 'user').prefetch_related(
+            'items__product__supplier',
+            'items__product__category',
+        )
 
         if self.action == 'restore':
             return queryset.filter(is_deleted=True)
@@ -381,7 +364,14 @@ class SuratTransferStokViewSet(viewsets.ModelViewSet):
     pagination_class = OptionalPagination
 
     def get_queryset(self):
-        queryset = SuratTransferStok.objects.all()
+        queryset = SuratTransferStok.objects.all().select_related(
+            'source_warehouse',
+            'destination_warehouse',
+            'user',
+        ).prefetch_related(
+            'items__product__supplier',
+            'items__product__category',
+        )
 
         if self.action == 'restore':
             return queryset.filter(is_deleted=True)
@@ -421,7 +411,10 @@ class SPKViewSet(viewsets.ModelViewSet):
     pagination_class = OptionalPagination
 
     def get_queryset(self):
-        queryset = SPK.objects.all()
+        queryset = SPK.objects.all().select_related('customer', 'user').prefetch_related(
+            'items__product__supplier',
+            'items__product__category',
+        )
 
         if self.action == 'restore':
             return queryset.filter(is_deleted=True)
@@ -461,7 +454,10 @@ class SJViewSet(viewsets.ModelViewSet):
     filterset_class = SJFilter
 
     def get_queryset(self):
-        queryset = SJ.objects.all()
+        queryset = SJ.objects.all().select_related('spk', 'warehouse', 'customer', 'user').prefetch_related(
+            'items__product__supplier',
+            'items__product__category',
+        )
 
         if self.action == 'restore':
             return queryset.filter(is_deleted=True)
@@ -522,7 +518,10 @@ class SuratLainViewSet(viewsets.ModelViewSet):
             return SuratLain.objects.none()
 
         # Start with the base queryset for the correct document type
-        queryset = SuratLain.objects.filter(document_type=document_type)
+        queryset = SuratLain.objects.filter(document_type=document_type).select_related('warehouse', 'user').prefetch_related(
+            'items__product__supplier',
+            'items__product__category',
+        )
 
         # For the 'restore' action, we must look in the deleted items
         if self.action == 'restore':
@@ -583,34 +582,11 @@ class StockInfoReportView(generics.ListAPIView):
     filterset_class = StockInfoReportFilter
 
     def get_queryset(self):
-        """
-        Applies a custom sort order to the stock info report.
-        """
-        category_order = Case(
-            When(product__category__name='ROMAN CANDLE', then=Value(1)),
-            When(product__category__name='SMALL ITEMS', then=Value(2)),
-            When(product__category__name='CAKE', then=Value(3)),
-            When(product__category__name='BAWANG', then=Value(4)),
-            When(product__category__name='KAWAT', then=Value(5)),
-            When(product__category__name='LOKAL', then=Value(6)),
-            When(product__category__name='CAKE DISPLAY', then=Value(7)),
-            When(product__category__name='SINGLE ROW', then=Value(8)),
-            When(product__category__name='SINGLE SHOT', then=Value(9)),
-            When(product__category__name='DAY FIREWORKS CAKE', then=Value(10)),
-            When(product__category__name='DAY FIREWORKS SHELL', then=Value(11)),
-            When(product__category__name='DISPLAY SHELL', then=Value(12)),
-            When(product__category__name='LAIN LAIN', then=Value(13)),
-            default=Value(14),
-            output_field=IntegerField(),
-        )
-
         queryset = Stock.objects.filter(
             product__is_deleted=False
         ).filter(
             Q(carton_quantity__gt=0) | Q(pack_quantity__gt=0)
-        ).annotate(
-            category_order=category_order
-        ).order_by('category_order', Lower('product__name'))
+        ).order_by('product__category__sort_order', Lower('product__name'))
 
         return queryset
 
@@ -624,7 +600,13 @@ class StockTransferReportView(generics.ListAPIView):
     pagination_class = OptionalPagination
     filterset_class = StockTransferReportFilter
 
-    queryset = SuratTransferStokItems.objects.filter(surat_transfer_stok__is_deleted=False).order_by('-surat_transfer_stok__created_at')
+    queryset = SuratTransferStokItems.objects.filter(surat_transfer_stok__is_deleted=False).select_related(
+        'surat_transfer_stok',
+        'product',
+        'product__supplier',
+        'surat_transfer_stok__source_warehouse',
+        'surat_transfer_stok__destination_warehouse',
+    ).order_by('-surat_transfer_stok__created_at')
 
 
 class ReturPembelianReportView(generics.ListAPIView):
@@ -635,7 +617,7 @@ class ReturPembelianReportView(generics.ListAPIView):
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='RETUR_PEMBELIAN',
         surat_lain__is_deleted=False
-    ).order_by('-surat_lain__transaction_date')
+    ).select_related('surat_lain', 'product', 'product__supplier', 'surat_lain__warehouse').order_by('-surat_lain__transaction_date')
 
     def get_serializer_context(self):
         """Pass report_type to the serializer."""
@@ -652,7 +634,7 @@ class ReturPenjualanReportView(generics.ListAPIView):
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='RETUR_PENJUALAN',
         surat_lain__is_deleted=False
-    ).order_by('-surat_lain__transaction_date')
+    ).select_related('surat_lain', 'product', 'product__supplier', 'surat_lain__warehouse').order_by('-surat_lain__transaction_date')
 
     def get_serializer_context(self):
         """Pass report_type to the serializer."""
@@ -669,7 +651,7 @@ class PenerimaanBarangReportView(generics.ListAPIView):
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='STB',
         surat_lain__is_deleted=False
-    ).order_by('-surat_lain__transaction_date')
+    ).select_related('surat_lain', 'product', 'product__supplier', 'surat_lain__warehouse').order_by('-surat_lain__transaction_date')
 
     def get_serializer_context(self):
         """Pass report_type to the serializer."""
@@ -686,7 +668,7 @@ class PengeluaranBarangReportView(generics.ListAPIView):
     queryset = SuratLainItems.objects.filter(
         surat_lain__document_type='SPB',
         surat_lain__is_deleted=False
-    ).order_by('-surat_lain__transaction_date')
+    ).select_related('surat_lain', 'product', 'product__supplier', 'surat_lain__warehouse').order_by('-surat_lain__transaction_date')
 
     def get_serializer_context(self):
         """Pass report_type to the serializer."""
@@ -708,7 +690,7 @@ class StockAdjustmentViewSet(
     serializer_class = StockAdjustmentSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPagination
-    queryset = StockAdjustment.objects.all().order_by('-created_at')
+    queryset = StockAdjustment.objects.all().select_related('warehouse', 'user').prefetch_related('items__product').order_by('-created_at')
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -723,39 +705,21 @@ class StockOutReportView(generics.ListAPIView):
     pagination_class = OptionalPagination
 
     def get_queryset(self):
-        """
-        Aggregates the stock out data, excluding items from deleted SJ documents,
-        and applies a custom sort order.
-        """
-        category_order = Case(
-            When(product__category__name='ROMAN CANDLE', then=Value(1)),
-            When(product__category__name='SMALL ITEMS', then=Value(2)),
-            When(product__category__name='CAKE', then=Value(3)),
-            When(product__category__name='BAWANG', then=Value(4)),
-            When(product__category__name='KAWAT', then=Value(5)),
-            When(product__category__name='LOKAL', then=Value(6)),
-            When(product__category__name='CAKE DISPLAY', then=Value(7)),
-            When(product__category__name='SINGLE ROW', then=Value(8)),
-            When(product__category__name='SINGLE SHOT', then=Value(9)),
-            When(product__category__name='DAY FIREWORKS CAKE', then=Value(10)),
-            When(product__category__name='DAY FIREWORKS SHELL', then=Value(11)),
-            When(product__category__name='DISPLAY SHELL', then=Value(12)),
-            When(product__category__name='LAIN LAIN', then=Value(13)),
-            default=Value(14),
-            output_field=IntegerField(),
-        )
-
-        return SJItems.objects.filter(sj__is_deleted=False).annotate(
+        return SJItems.objects.filter(sj__is_deleted=False).select_related(
+            'sj',
+            'product',
+            'product__category',
+            'product__supplier',
+        ).annotate(
             product_code=F('product__code'),
             product_name=F('product__name'),
             packing=F('product__packing'),
-            category_order=category_order # Add the custom order annotation
         ).values(
-            'product_code', 'product_name', 'packing', 'category_order'
+            'product_code', 'product_name', 'packing'
         ).annotate(
             total_carton_quantity=Sum('carton_quantity'),
             total_pack_quantity=Sum('pack_quantity')
-        ).order_by('category_order', Lower('product__name'))
+        ).order_by('product__category__sort_order', Lower('product__name'))
 
 
 class StockInReportView(generics.ListAPIView):
@@ -767,36 +731,18 @@ class StockInReportView(generics.ListAPIView):
     pagination_class = OptionalPagination
 
     def get_queryset(self):
-        """
-        Aggregates the stock in data, excluding items from deleted SPG documents,
-        and applies a custom sort order.
-        """
-        category_order = Case(
-            When(product__category__name='ROMAN CANDLE', then=Value(1)),
-            When(product__category__name='SMALL ITEMS', then=Value(2)),
-            When(product__category__name='CAKE', then=Value(3)),
-            When(product__category__name='BAWANG', then=Value(4)),
-            When(product__category__name='KAWAT', then=Value(5)),
-            When(product__category__name='LOKAL', then=Value(6)),
-            When(product__category__name='CAKE DISPLAY', then=Value(7)),
-            When(product__category__name='SINGLE ROW', then=Value(8)),
-            When(product__category__name='SINGLE SHOT', then=Value(9)),
-            When(product__category__name='DAY FIREWORKS CAKE', then=Value(10)),
-            When(product__category__name='DAY FIREWORKS SHELL', then=Value(11)),
-            When(product__category__name='DISPLAY SHELL', then=Value(12)),
-            When(product__category__name='LAIN LAIN', then=Value(13)),
-            default=Value(14), # Changed to 14 to avoid conflicts
-            output_field=IntegerField(),
-        )
-
-        return SPGItems.objects.filter(spg__is_deleted=False).annotate(
+        return SPGItems.objects.filter(spg__is_deleted=False).select_related(
+            'spg',
+            'product',
+            'product__category',
+            'product__supplier',
+        ).annotate(
             product_code=F('product__code'),
             product_name=F('product__name'),
             packing=F('product__packing'),
-            category_order=category_order # Add the custom order annotation
         ).values(
-            'product_code', 'product_name', 'packing', 'category_order'
+            'product_code', 'product_name', 'packing'
         ).annotate(
             total_carton_quantity=Sum('carton_quantity'),
             total_pack_quantity=Sum('pack_quantity')
-        ).order_by('category_order', Lower('product__name'))
+        ).order_by('product__category__sort_order', Lower('product__name'))
