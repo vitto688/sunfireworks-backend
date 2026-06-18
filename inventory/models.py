@@ -1,6 +1,4 @@
-from sys import modules
 from django.db.models.signals import post_save
-from django.db.transaction import non_atomic_requests
 from django.dispatch import receiver
 from django.db import models, transaction
 from django.utils import timezone
