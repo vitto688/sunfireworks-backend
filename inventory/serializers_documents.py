@@ -198,6 +198,7 @@ class SPGSerializer(serializers.ModelSerializer):
                 instance.sj_number = validated_data.get('sj_number', instance.sj_number)
                 instance.start_unload = validated_data.get('start_unload', instance.start_unload)
                 instance.finish_load = validated_data.get('finish_load', instance.finish_load)
+                instance.notes = validated_data.get('notes', instance.notes)
                 instance.save()
 
                 instance.items.all().delete()
