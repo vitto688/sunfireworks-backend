@@ -584,6 +584,10 @@ class StockInfoReportView(generics.ListAPIView):
     def get_queryset(self):
         queryset = Stock.objects.filter(
             product__is_deleted=False
+        ).select_related(
+            'product__category',
+            'product__supplier',
+            'warehouse',
         ).filter(
             Q(carton_quantity__gt=0) | Q(pack_quantity__gt=0)
         ).order_by('product__category__sort_order', Lower('product__name'))
